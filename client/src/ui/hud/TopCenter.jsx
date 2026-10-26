@@ -23,14 +23,20 @@ function useHint() {
   return { text: 'Slide to win more Wins!', rebirth: false }
 }
 
-/** The big hint across the top, as in the reference, with a progress bar on the rebirth step. */
+/**
+ * The big hint across the top, as in the reference, with a progress bar on the rebirth
+ * step. Each new hint shows for about three seconds and fades (pp-hint), so it's never
+ * in the way of playing; keyed on its text, a new one starts it again. Paused while the
+ * HUD is out of sight (sliding, a panel open), so a hint is never used up unseen.
+ */
 function HintBanner() {
   const hint = useHint()
   const progress = useGame((s) => rebirthProgress(s.profile))
   const maxed = useGame((s) => isMaxLevel(s.profile))
+  const hidden = useGame((s) => Boolean(s.slide || s.slideResult) || s.panel !== null)
 
   return (
-    <div className="flex flex-col items-center">
+    <div key={hint.text} className="pp-hint flex flex-col items-center" style={{ animationPlayState: hidden ? 'paused' : 'running' }}>
       <div style={{ fontSize: u(68) }}>
         <StrokeText stroke={u(13)} gradient={BANNER_GRADIENT}>
           {hint.text}

@@ -7,6 +7,7 @@ import { glowTime } from '../glow'
 import { createToyMaterial, sharedMaterials, toyTime } from '../materials'
 import { createGroundGeometry, createGroundMap } from './ground'
 import { buildEggStands } from './eggs'
+import { buildHalloween } from './halloween'
 import { buildPortalFrame } from './portalFrame'
 import { createPaintedSigns } from './signs'
 import { buildSlideZone } from './slideZone'
@@ -66,6 +67,7 @@ export function World() {
     buildShop(set, { detail: decorDensity >= 0.75 })
     buildSlideZone(set, propBuilder, { detail: decorDensity >= 0.75 })
     buildPortalFrame(set)
+    buildHalloween(set, { detail: decorDensity >= 0.75 })
     buildWaterfall(set)
     buildEggStands(set, propBuilder)
 

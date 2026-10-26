@@ -1,4 +1,4 @@
-import { BOARDS, EGGS, ITEMS, MULTI_HATCH, SHOP, SLIDE_TICK, TRAIN_INTERVAL, TREADMILLS, WALK_STEP, WORLD2_WINS } from './balance.js'
+import { BOARDS, EGGS, ITEMS, MULTI_HATCH, SHOP, SLIDE_TICK, TRAIN_INTERVAL, TREADMILLS, WALK_STEP, WORLD_PORTALS } from './balance.js'
 import {
   advanceTutorial,
   applyRebirth,
@@ -25,7 +25,7 @@ import {
   unequipPet,
   usePotion,
 } from './logic.js'
-import { BOARD_PADS, beltRect, eggStandNear, FREE_REWARD, inRect, inSlideZone, MAX_MOVE_SPEED, padRect, PORTAL } from './world.js'
+import { BOARD_PADS, beltRect, eggStandNear, FREE_REWARD, inRect, inSlideZone, MAX_MOVE_SPEED, padRect, portalAt } from './world.js'
 
 const BOARD_INDEX = Object.fromEntries(BOARDS.map((b, i) => [b.id, i]))
 
@@ -246,9 +246,9 @@ export class PlayerSession {
 
     portal() {
       const p = this.getPosition()
-      if (Math.hypot(p.x - PORTAL.x, p.z - PORTAL.z) > PORTAL.radius + 2) return
-      if (this.profile.wins < WORLD2_WINS) return
-      this.badge('world2')
+      const portal = portalAt(p.x, p.z, 2)
+      if (!portal || this.profile.wins < WORLD_PORTALS[portal.id].wins) return
+      this.badge(portal.id)
     },
 
     usePotion({ itemId }, now) {

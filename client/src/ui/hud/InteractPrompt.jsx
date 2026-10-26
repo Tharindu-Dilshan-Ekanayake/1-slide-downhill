@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { BOARDS, SHOP, TREADMILLS, WORLD2_WINS } from '@shared/balance'
+import { BOARDS, SHOP, TREADMILLS, WORLD_PORTALS } from '@shared/balance'
 import { formatMultiplier, formatNumber } from '@shared/format'
 import { isTreadmillUnlocked } from '@shared/logic'
 
@@ -27,9 +27,10 @@ function usePrompt() {
   const wins = useGame((s) => s.profile.wins)
 
   if (atPortal) {
-    return wins >= WORLD2_WINS
-      ? { title: 'World 2', action: 'Coming soon!', run: null }
-      : { title: 'World 2', action: `Needs ${formatNumber(WORLD2_WINS)} Wins (you have ${formatNumber(wins)})`, run: null }
+    const world = WORLD_PORTALS[atPortal]
+    return wins >= world.wins
+      ? { title: world.name, action: 'Coming soon!', run: null }
+      : { title: world.name, action: `Needs ${formatNumber(world.wins)} Wins (you have ${formatNumber(wins)})`, run: null }
   }
 
   if (atSphinx) {

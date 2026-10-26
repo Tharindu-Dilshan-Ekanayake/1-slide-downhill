@@ -15,7 +15,7 @@ import {
   EGG_STANDS,
   FREE_REWARD,
   LEADERBOARDS,
-  PORTAL,
+  PORTALS,
   SHOP,
   SLIDE_START_Z,
   SLIDE_ZONE,
@@ -82,15 +82,17 @@ export function createGroundMap(maxTexture) {
   bordered({ minX: CONSOLE_X - 3, maxX: BELT_NEAR_X + 3, minZ: treadsMinZ, maxZ: treadsMaxZ }, PALETTE.apron, PALETTE.apronEdge)
 
   // Paths: a walkway along the treadmill entrances, spawn up to the slide zone, spawn to
-  // the treadmills, the shop, the eggs over to the Sphinx, and a spur up to the portal.
+  // the treadmills, the shop, the eggs over to the Sphinx, and a spur up to each portal:
+  // World 2's from the shop path, World 3's from the treadmill apron.
   const eggsZ = EGG_STANDS[0].z
+  const spurTo = { world2: -12, world3: treadsMinZ }
   const paths = [
     { minX: BELT_NEAR_X + 3, maxX: BELT_NEAR_X + 8, minZ: treadsMinZ, maxZ: treadsMaxZ },
     { minX: -5, maxX: 5, minZ: SLIDE_ZONE.maxZ, maxZ: 16 },
     { minX: BELT_NEAR_X + 3, maxX: -5, minZ: 11, maxZ: 17 },
     { minX: 5, maxX: SHOP.minX + 1, minZ: -12, maxZ: -6 },
     { minX: 16, maxX: 46, minZ: eggsZ - 2, maxZ: eggsZ + 2 },
-    { minX: PORTAL.x - 3, maxX: PORTAL.x + 3, minZ: PORTAL.z + 3, maxZ: -12 },
+    ...PORTALS.map((p) => ({ minX: p.x - 3, maxX: p.x + 3, minZ: p.z + 3, maxZ: spurTo[p.id] })),
   ]
   for (const p of paths) bordered(p, PALETTE.path, PALETTE.pathEdge)
   // Paths overlap; repaint the interiors so crossings don't show edges.
@@ -105,8 +107,12 @@ export function createGroundMap(maxTexture) {
   bordered({ minX: -18, maxX: 18, minZ: eggsZ - 4, maxZ: LEADERBOARDS[0].z - 1 }, PALETTE.apron, PALETTE.apronEdge)
   rect({ minX: SHOP.minX, maxX: SHOP.maxX, minZ: SHOP.minZ, maxZ: SHOP.maxZ }, PALETTE.shopFloor)
 
-  disc(PORTAL.x, PORTAL.z, 6, PALETTE.apronEdge)
-  disc(PORTAL.x, PORTAL.z, 5, PALETTE.apron)
+  // World 3's is Halloween purple.
+  for (const p of PORTALS) {
+    const spooky = p.id === 'world3'
+    disc(p.x, p.z, 6, spooky ? '#3b2a4f' : PALETTE.apronEdge)
+    disc(p.x, p.z, 5, spooky ? '#6b5590' : PALETTE.apron)
+  }
   disc(FREE_REWARD.x, FREE_REWARD.z, 4, PALETTE.apronEdge)
 
   // Waterfall pool at the foot of the north cliff.

@@ -20,8 +20,7 @@ import useKeyboard from './useKeyboard'
 export const PLAYER_HEIGHT = 1.8
 const RADIUS = 0.45
 
-const WALK_SPEED = 7.5
-const SPRINT_MULTIPLIER = 1.45
+const WALK_SPEED = 10.875
 const ACCELERATION = 16
 const GRAVITY = 32
 const JUMP_SPEED = 10.5
@@ -233,8 +232,6 @@ export function Player({ onAvatarReady }) {
       )
     }
     const inputLength = Math.min(1, _input.length())
-    const sprint = k.sprint ? SPRINT_MULTIPLIER : 1
-    const maxSpeed = WALK_SPEED * sprint
 
     if (inputLength > 0.02) {
       _input.normalize()
@@ -249,7 +246,7 @@ export function Player({ onAvatarReady }) {
         .addScaledVector(_camForward, -_input.z)
         .addScaledVector(_camRight, _input.x)
         .normalize()
-        .multiplyScalar(maxSpeed * inputLength)
+        .multiplyScalar(WALK_SPEED * inputLength)
     } else {
       _move.set(0, 0, 0)
     }
@@ -325,15 +322,12 @@ export function Player({ onAvatarReady }) {
     player.speed = speed
     player.anim = !player.grounded ? 'jump' : running ? 'run' : speed > 0.5 ? 'walk' : 'idle'
 
-    const runSpeed = WALK_SPEED * SPRINT_MULTIPLIER
-    const shownSpeed = running ? runSpeed : speed
+    const shownSpeed = running ? WALK_SPEED : speed
     motion.speed = shownSpeed
     motion.grounded = player.grounded
-    // Full stride amplitude at a sprint, so walking reads as a walk.
-    motion.maxSpeed = runSpeed
     motion.vy = vy.current
     // Steps quicken with speed: the stride phase runs faster rather than jumping.
-    motion.stride += delta * (5 + 6 * Math.min(1, shownSpeed / runSpeed))
+    motion.stride += delta * (5 + 6 * Math.min(1, shownSpeed / WALK_SPEED))
   })
 
   return (
