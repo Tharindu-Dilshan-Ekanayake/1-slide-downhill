@@ -5,7 +5,7 @@ import {
   FREE_REWARD,
   inSlideZone,
   padAt,
-  PORTAL,
+  portalAt,
   SPHINX_STAND,
   TREADMILL_COUNT,
   treadmillAt,
@@ -80,11 +80,11 @@ export function startGameTicker() {
       slideZone: inSlideZone(p.x, p.z),
       pad: padAt(p.x, p.z),
       egg: egg ? egg.eggId : null,
-      portal: Math.hypot(p.x - PORTAL.x, p.z - PORTAL.z) < PORTAL.radius,
+      portal: portalAt(p.x, p.z)?.id ?? null,
       freeReward: Math.hypot(p.x - FREE_REWARD.x, p.z - FREE_REWARD.z) < FREE_REWARD.radius,
     }
     if (!sameZone(zone, game.zone)) {
-      if (zone.portal && !game.zone.portal) actions.portal()
+      if (zone.portal && zone.portal !== game.zone.portal) actions.portal()
       game.setZone(zone)
     }
     if (zone.treadmill !== lastTreadmill) {

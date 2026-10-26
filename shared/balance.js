@@ -219,8 +219,14 @@ export const OFFLINE_RATE = 0.25
 export const OFFLINE_MAX_MS = 8 * 60 * 60 * 1000
 export const OFFLINE_MIN_MS = 60 * 1000
 
-/** Wins needed to step through the World 2 portal. */
-export const WORLD2_WINS = 15000
+/**
+ * The world portals (placed by PORTALS in world.js): their names, and the Wins needed
+ * to step through. Stepping through earns the badge of the same id.
+ */
+export const WORLD_PORTALS = {
+  world2: { name: 'World 2', wins: 15000 },
+  world3: { name: 'Halloween World', wins: 50000 },
+}
 
 // --- Shop -------------------------------------------------------------------------
 
@@ -270,4 +276,5 @@ export const BADGES = {
   firstPet: { name: 'Pet Owner' },
   kilometer: { name: 'Kilometre Club' },
   world2: { name: 'World Traveller' },
+  world3: { name: 'Spooky Traveller' },
 }

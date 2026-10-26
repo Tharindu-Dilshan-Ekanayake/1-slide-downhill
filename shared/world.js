@@ -136,7 +136,38 @@ export const LEADERBOARDS = [
   { id: 'distance', x: 12, z: 33.5 },
 ]
 
-export const PORTAL = { x: 28, z: -34, radius: 3.4 }
+/**
+ * The world portals either side of the start arch: World 2 to the east, and World 3,
+ * the Halloween one, mirrored to the west. Names and Wins are WORLD_PORTALS in balance.js.
+ */
+export const PORTALS = [
+  { id: 'world2', x: 28, z: -34, radius: 3.4 },
+  { id: 'world3', x: -28, z: -34, radius: 3.4 },
+]
+const WORLD3 = PORTALS[1]
+
+/**
+ * World 3's Halloween dressing, all solid: a big jack-o'-lantern either side of the
+ * portal, smaller ones about, graves and a dead tree. Faces look south, at the plaza.
+ */
+export const HALLOWEEN_PROPS = [
+  { kind: 'pumpkin', x: WORLD3.x - 6.2, z: WORLD3.z + 0.6, size: 1.9 },
+  { kind: 'pumpkin', x: WORLD3.x + 6.2, z: WORLD3.z + 0.6, size: 1.9 },
+  { kind: 'pumpkin', x: WORLD3.x - 8.6, z: WORLD3.z + 4.2, size: 1.1 },
+  { kind: 'pumpkin', x: WORLD3.x + 8.4, z: WORLD3.z + 4.6, size: 1.2 },
+  { kind: 'pumpkin', x: WORLD3.x + 4.6, z: WORLD3.z + 3.4, size: 0.8 },
+  { kind: 'grave', x: WORLD3.x - 9.5, z: WORLD3.z - 2.5 },
+  { kind: 'grave', x: WORLD3.x - 11.2, z: WORLD3.z + 2.2 },
+  { kind: 'grave', x: WORLD3.x + 8.8, z: WORLD3.z - 3.2 },
+  { kind: 'tree', x: WORLD3.x - 13.5, z: WORLD3.z - 1.5 },
+]
+/** Footprint half-sizes of each kind of prop (a pumpkin's scales with it). */
+const PROP_HALF = {
+  pumpkin: (p) => [0.65 * p.size, 0.6 * p.size],
+  grave: () => [0.7, 0.35],
+  tree: () => [0.5, 0.5],
+}
+
 export const FREE_REWARD = { x: 12, z: 10, radius: 3 }
 export const WATERFALL = { x: 42, z: -40 }
 
@@ -158,9 +189,9 @@ export const STATIC_COLLIDERS = [
   box(SPHINX_STAND.x, SPHINX_STAND.z, 3, 3),
   ...LEADERBOARDS.map((b) => box(b.x, b.z, 4.6, 0.5)),
   box(FREE_REWARD.x, FREE_REWARD.z, 1.4, 1.4),
-  // The portal ring's base; the swirl itself is walk-through.
-  box(PORTAL.x - PORTAL.radius, PORTAL.z, 0.6, 0.8),
-  box(PORTAL.x + PORTAL.radius, PORTAL.z, 0.6, 0.8),
+  // Each portal ring's base; the swirl itself is walk-through.
+  ...PORTALS.flatMap((p) => [box(p.x - p.radius, p.z, 0.6, 0.8), box(p.x + p.radius, p.z, 0.6, 0.8)]),
+  ...HALLOWEEN_PROPS.map((p) => box(p.x, p.z, ...PROP_HALF[p.kind](p))),
   // The start arch's pillars.
   box(-SLIDE_ARCH.x, SLIDE_ARCH.z, 1, 1),
   box(SLIDE_ARCH.x, SLIDE_ARCH.z, 1, 1),
@@ -191,6 +222,14 @@ export function treadmillAt(x, z, margin = 0) {
 }
 
 export const inSlideZone = (x, z, margin = 0) => inRect(SLIDE_ZONE, x, z, margin)
+
+/** The portal whose swirl (x, z) is in, give or take `margin`, or null. */
+export function portalAt(x, z, margin = 0) {
+  for (const p of PORTALS) {
+    if (Math.hypot(x - p.x, z - p.z) < p.radius + margin) return p
+  }
+  return null
+}
 
 /**
  * Whether a move from `from` to `to` is the hop back to the top after a slide: off the

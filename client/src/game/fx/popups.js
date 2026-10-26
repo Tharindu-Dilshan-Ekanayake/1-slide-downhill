@@ -5,8 +5,8 @@ import { Vector3 } from 'three'
  * by projecting a world point each frame. When the pool is full the oldest popup is
  * recycled, so a fast treadmill can never pile up elements.
  *
- * A popup can also sit off its point on screen and drift (in reference pixels, see
- * spawnAround): that's how the ones round a rider spread out instead of stacking.
+ * While you slide they're pinned to the screen instead (see spawnScattered), scattered
+ * about it rather than chasing the rider round.
  */
 
 export const POPUP_POOL_SIZE = 10
@@ -37,14 +37,13 @@ export function registerPopupElements(elements) {
       /** Set for popups that ride along with something moving; `pos` is then relative to it. */
       follow: null,
       scale: 1,
-      /** Screen offset from the point, and how far it drifts over its life (reference px). */
-      ox: 0,
-      oy: 0,
-      dx: 0,
-      dy: 0,
-      /** Tilt in degrees; `rise` is false for drifting popups (they don't float up in the world). */
+      /** Pinned to the screen, not to a world point (see spawnScattered). */
+      screen: false,
+      /** Where on screen: -1..1 across the scatter area, 0..1 down it. */
+      u: 0,
+      v: 0,
+      /** Tilt in degrees as it lands; it settles most of the way upright. */
       rot: 0,
-      rise: true,
     })
   }
 }
@@ -53,10 +52,10 @@ export function registerPopupElements(elements) {
  * @param {string} text
  * @param {{ x: number, y: number, z: number }} position world point to rise from
  * @param {{ iconUrl?: string, scale?: number, gradient?: string, life?: number,
- *   follow?: Vector3, ox?: number, oy?: number, dx?: number, dy?: number, rot?: number }} [style]
+ *   follow?: Vector3, screen?: boolean, u?: number, v?: number, rot?: number }} [style]
  *   no `iconUrl` = text only; `follow` keeps the popup where it started relative to that
- *   (moving) point, e.g. a rider going down the hill. `ox`/`oy` put it off the point on
- *   screen and `dx`/`dy` drift it (reference pixels; it then doesn't rise); `rot` tilts it.
+ *   (moving) point, e.g. a rider going down the hill. `screen` pins it to the screen at
+ *   `u`/`v` instead (`position` is then ignored); `rot` tilts it as it lands.
  */
 export function spawnPopup(text, position, style = {}) {
   if (pool.length === 0) return
@@ -69,12 +68,10 @@ export function spawnPopup(text, position, style = {}) {
   slot.pos.set(position.x, position.y, position.z)
   slot.follow = style.follow || null
   if (slot.follow) slot.pos.sub(slot.follow)
-  slot.ox = style.ox || 0
-  slot.oy = style.oy || 0
-  slot.dx = style.dx || 0
-  slot.dy = style.dy || 0
+  slot.screen = Boolean(style.screen)
+  slot.u = style.u || 0
+  slot.v = style.v || 0
   slot.rot = style.rot || 0
-  slot.rise = !(style.dx || style.dy)
   const shown = slot.shown
   if (shown.text !== text) {
     shown.text = text
@@ -96,48 +93,58 @@ export function spawnPopup(text, position, style = {}) {
   slot.el.style.display = 'flex'
 }
 
-// --- Round a rider -------------------------------------------------------------------
-
-/** Popups round a rider fan out over this arc above them (screen angles, degrees; up is -90). */
-const ARC_FROM = -175
-const ARC_SPAN = 170
-/** How far out they appear (reference px), and how much further they drift. */
-const RING_MIN = 135
-const RING_SPREAD = 90
-const DRIFT = 55
-let ringIndex = 0
-/** Reused style for spawnAround: it's called a few times a second, never per frame. */
-const ringStyle = { iconUrl: null, scale: 1, gradient: null, life: 0, follow: null, ox: 0, oy: 0, dx: 0, dy: 0, rot: 0 }
+// --- Scattered over the screen while you slide -------------------------------------------
 
 /**
- * A popup round something moving (a rider): at the next spot of a golden-ratio sequence
- * over the arc above it, so consecutive popups land well apart, then drifting outwards
- * and up as it fades. `center` is followed; the popup is pinned `lift` metres above it.
+ * The scatter area (reference px, the 1920x1080 layout): this far either side of the
+ * middle, from this far down from the top to this far up from the bottom - below the
+ * distance counter, above the Slide bar.
+ */
+const SCATTER_HALF_WIDTH = 620
+const SCATTER_TOP = 350
+const SCATTER_BOTTOM = 340
+/** Kept at least this far in from the sides on narrow screens (reference px). */
+const SCATTER_EDGE = 130
+/** The rider, in scatter coordinates: the middle (|u| below this), from this far down. */
+const RIDER_U = 0.28
+const RIDER_V = 0.3
+/** How far a popup floats up over its life (reference px). */
+const SCATTER_RISE = 40
+const SCATTER_LAND_MS = 200
+const SCATTER_LIFE_MS = 1100
+/** The R2 sequence's steps: each spot lands well away from the last few. */
+const R2_U = 0.7548776662466927
+const R2_V = 0.5698402909980532
+let scatterIndex = 0
+/** Reused style for spawnScattered: it's called a few times a second, never per frame. */
+const scatterStyle = { iconUrl: null, scale: 1, gradient: null, life: 0, screen: true, u: 0, v: 0, rot: 0 }
+
+/**
+ * A popup somewhere on screen, wherever the rider goes, at the next spot of a sequence
+ * that spreads them evenly over the scatter area (skipping the rider): it lands with a
+ * bounce, floats up a little and fades.
  *
  * @param {string} text
- * @param {Vector3} center the moving point (kept by reference)
- * @param {number} lift metres above `center` the ring is centred on
  * @param {{ iconUrl?: string, scale?: number, gradient?: string, life?: number }} [style]
  */
-export function spawnAround(text, center, lift, style = {}) {
-  ringIndex += 1
-  const a = ((ARC_FROM + ((ringIndex * 0.618034) % 1) * ARC_SPAN) * Math.PI) / 180
-  const r = RING_MIN + ((ringIndex * 0.381966) % 1) * RING_SPREAD
-  // A wider ring than tall: the screen is wide and text is wider than it is high.
-  const cx = Math.cos(a)
-  const cy = Math.sin(a)
-  ringStyle.iconUrl = style.iconUrl || null
-  ringStyle.scale = style.scale || 1
-  ringStyle.gradient = style.gradient || null
-  ringStyle.life = style.life || 1050
-  ringStyle.follow = center
-  ringStyle.ox = cx * r * 1.65
-  ringStyle.oy = cy * r
-  ringStyle.dx = cx * DRIFT
-  ringStyle.dy = cy * DRIFT * 0.6 - 30
-  ringStyle.rot = cx * -9 + (Math.random() - 0.5) * 6
-  _v.copy(center).y += lift
-  spawnPopup(text, _v, ringStyle)
+export function spawnScattered(text, style = {}) {
+  let u = 0
+  let v = 0
+  for (let tries = 0; tries < 6; tries += 1) {
+    scatterIndex += 1
+    u = ((0.5 + scatterIndex * R2_U) % 1) * 2 - 1
+    v = (0.5 + scatterIndex * R2_V) % 1
+    if (Math.abs(u) >= RIDER_U || v < RIDER_V) break
+  }
+  scatterStyle.iconUrl = style.iconUrl || null
+  // A little bigger or smaller each time, and tilted as it lands, so they don't look stamped out.
+  scatterStyle.scale = (style.scale || 1) * (0.9 + ((scatterIndex * 0.381966) % 1) * 0.25)
+  scatterStyle.gradient = style.gradient || null
+  scatterStyle.life = style.life || SCATTER_LIFE_MS
+  scatterStyle.u = u
+  scatterStyle.v = v
+  scatterStyle.rot = u * -10 + (scatterIndex % 2 ? 5 : -5)
+  spawnPopup(text, _v.set(0, 0, 0), scatterStyle)
 }
 
 /** Positions every live popup. Runs inside the frame loop; touches only DOM styles. */
@@ -145,6 +152,10 @@ export function updatePopups(camera, width, height) {
   const now = performance.now()
   // One reference pixel on this screen, as the HUD's --px works it out.
   const px = Math.min(1.4, Math.max(0.42, Math.min(width / 1920, height / 1080)))
+  // The scatter area on this screen.
+  const halfWidth = Math.max(0, Math.min(SCATTER_HALF_WIDTH * px, width / 2 - SCATTER_EDGE * px))
+  const top = SCATTER_TOP * px
+  const span = Math.max(0, height - SCATTER_BOTTOM * px - top)
   for (const p of pool) {
     if (!p.active) continue
     const t = (now - p.born) / p.life
@@ -153,21 +164,32 @@ export function updatePopups(camera, width, height) {
       p.el.style.display = 'none'
       continue
     }
+    // Pop in, hold, fade out.
+    const pop = t < 0.12 ? 0.6 + (t / 0.12) * 0.55 : t < 0.22 ? 1.15 - ((t - 0.12) / 0.1) * 0.15 : 1
+    const fade = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1
+
+    if (p.screen) {
+      const land = Math.min(1, (now - p.born) / SCATTER_LAND_MS)
+      const eased = 1 - (1 - land) * (1 - land) * (1 - land)
+      // Floats up, quickly at first, then hangs there as it fades.
+      const rise = (1 - (1 - t) * (1 - t)) * SCATTER_RISE * px
+      const x = width / 2 + p.u * halfWidth
+      const y = top + p.v * span - rise
+      p.el.style.opacity = String(fade)
+      p.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) rotate(${p.rot * (1 - 0.6 * eased)}deg) scale(${pop * p.scale})`
+      continue
+    }
+
     _v.copy(p.pos)
     if (p.follow) _v.add(p.follow)
-    if (p.rise) _v.y += t * RISE
+    _v.y += t * RISE
     _v.project(camera)
     if (_v.z > 1) {
       p.el.style.opacity = '0'
       continue
     }
-    // Drift eases out: quick away from the rider, then hanging there as it fades.
-    const drift = 1 - (1 - t) * (1 - t)
-    const x = (_v.x * 0.5 + 0.5) * width + (p.ox + p.dx * drift) * px
-    const y = (-_v.y * 0.5 + 0.5) * height + (p.oy + p.dy * drift) * px
-    // Pop in, hold, fade out.
-    const pop = t < 0.12 ? 0.6 + (t / 0.12) * 0.55 : t < 0.22 ? 1.15 - ((t - 0.12) / 0.1) * 0.15 : 1
-    const fade = t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1
+    const x = (_v.x * 0.5 + 0.5) * width
+    const y = (-_v.y * 0.5 + 0.5) * height
     p.el.style.opacity = String(fade)
     p.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) rotate(${p.rot}deg) scale(${pop * p.scale})`
   }

@@ -9,8 +9,8 @@ import { FACE_DOWNHILL, riderBody, rideTurn, standSide } from '../slide/path'
 
 /** How often the set of fully drawn players is reconsidered. */
 const PICK_MS = 500
-/** A sprint: full stride amplitude, as for your own character. */
-const MAX_SPEED = 7.5 * 1.45
+/** Top walking speed: full stride amplitude, as for your own character. */
+const MAX_SPEED = 10.875
 /** Facing a treadmill's console, as your own character does. */
 const TREADMILL_YAW = -Math.PI / 2
 

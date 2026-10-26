@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { BOARDS, EGGS, levelCap, rebirthMultiplier, SHOP, slideForLevel, TUTORIAL } from '../../shared/balance.js'
+import { BOARDS, EGGS, levelCap, rebirthMultiplier, SHOP, slideForLevel, TUTORIAL, WORLD_PORTALS } from '../../shared/balance.js'
 import { formatNumber } from '../../shared/format.js'
 import {
   applyRebirth,
@@ -19,7 +19,7 @@ import {
   slidePacks,
 } from '../../shared/logic.js'
 import { PlayerSession } from '../../shared/session.js'
-import { BELT_FAR_X, BELT_NEAR_X, BOARD_PADS, isSlideReturn, SLIDE_RETURN, SLIDE_ZONE, SPAWN, treadmillCenterZ } from '../../shared/world.js'
+import { BELT_FAR_X, BELT_NEAR_X, BOARD_PADS, isSlideReturn, PORTALS, SLIDE_RETURN, SLIDE_ZONE, SPAWN, treadmillCenterZ } from '../../shared/world.js'
 
 const onBelt = (i) => ({ x: (BELT_NEAR_X + BELT_FAR_X) / 2, y: 0.5, z: treadmillCenterZ(i) })
 const inZone = () => ({ x: 0, y: 0, z: (SLIDE_ZONE.minZ + SLIDE_ZONE.maxZ) / 2 })
@@ -182,6 +182,21 @@ test('slides start only from the slide zone, and Slide ticks in on the way down'
   for (let t = 1100; t < 4000; t += 100) s.tick(0.1, t)
   assert.ok(s.profile.slide >= 2, `got ${s.profile.slide}`)
   assert.equal(s.profile.tutorialStep, 1)
+})
+
+test('each world portal badges you only from its own swirl, with its own Wins', () => {
+  const pos = { x: 0, y: 0, z: 0 }
+  const s = new PlayerSession(createProfile('a', 'A'), { now: 0, emit: () => {}, getPosition: () => pos })
+  const world3 = PORTALS.find((p) => p.id === 'world3')
+  s.profile.wins = WORLD_PORTALS.world3.wins - 1
+  s.handle('portal', {}, 0)
+  assert.deepEqual(s.profile.badges, [], 'not from spawn')
+  Object.assign(pos, { x: world3.x, z: world3.z })
+  s.handle('portal', {}, 0)
+  assert.deepEqual(s.profile.badges, [], 'one Win short')
+  s.profile.wins += 1
+  s.handle('portal', {}, 0)
+  assert.deepEqual(s.profile.badges, ['world3'])
 })
 
 test('only the hop back from the slide zone skips the speed check', () => {

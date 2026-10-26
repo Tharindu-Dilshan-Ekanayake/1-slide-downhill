@@ -1,7 +1,7 @@
-import { BOARDS, EGGS, PETS, SHOP, TREADMILLS, WORLD2_WINS } from '@shared/balance'
+import { BOARDS, EGGS, PETS, SHOP, TREADMILLS, WORLD_PORTALS } from '@shared/balance'
 import { formatMultiplier, formatNumber } from '@shared/format'
 import { isTreadmillUnlocked } from '@shared/logic'
-import { BOARD_PADS, CONSOLE_X, EGG_STANDS, FREE_REWARD, PORTAL, SPHINX_STAND, treadmillCenterZ } from '@shared/world'
+import { BOARD_PADS, CONSOLE_X, EGG_STANDS, FREE_REWARD, PORTALS, SPHINX_STAND, treadmillCenterZ } from '@shared/world'
 
 import { eggHeight } from '../world/eggs'
 import { TREADMILL_THEMES } from '../world/structures'
@@ -156,20 +156,26 @@ const freeRewardLabel = () => ({
   fade: 90,
 })
 
-const portalLabel = () => ({
-  id: 'portal',
-  position: [PORTAL.x, PORTAL.radius * 2 + 2.8, PORTAL.z],
-  spec: {
-    lines: [
-      { text: 'WORLD 2', size: 60, gradient: TEXT.green },
-      { text: `Need ${formatNumber(WORLD2_WINS)} Wins`, size: 42, icon: 'trophy', gradient: TEXT.white },
-    ],
-    pxPerUnit: 56,
-  },
-  fade: 140,
-})
+/** "WORLD 2", or "WORLD 3 / HALLOWEEN" in pumpkin orange and purple, and the Wins needed. */
+const portalLabel = (portal) => {
+  const halloween = portal.id === 'world3'
+  const lines = halloween
+    ? [
+        { text: 'WORLD 3', size: 60, gradient: ['#fff1c2', '#ffa53b', '#ff6a00'] },
+        { text: 'HALLOWEEN', size: 46, gradient: ['#f3d9ff', '#c27bff', '#7a2fd6'] },
+      ]
+    : [{ text: 'WORLD 2', size: 60, gradient: TEXT.green }]
+  lines.push({ text: `Need ${formatNumber(WORLD_PORTALS[portal.id].wins)} Wins`, size: 42, icon: 'trophy', gradient: TEXT.white })
+  return {
+    id: `portal-${portal.id}`,
+    // A line higher for the extra line, so it still clears the ring.
+    position: [portal.x, portal.radius * 2 + (halloween ? 3.4 : 2.8), portal.z],
+    spec: { lines, pxPerUnit: 56 },
+    fade: 140,
+  }
+}
 
 /** Every label in the lobby. */
 export function lobbyLabels(profile, { sphinxStock = 0 } = {}) {
-  return [...treadmillLabels(profile), ...padLabels(profile), ...eggLabels(), sphinxLabel(sphinxStock), freeRewardLabel(), portalLabel()]
+  return [...treadmillLabels(profile), ...padLabels(profile), ...eggLabels(), sphinxLabel(sphinxStock), freeRewardLabel(), ...PORTALS.map(portalLabel)]
 }

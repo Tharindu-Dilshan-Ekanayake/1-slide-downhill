@@ -8,7 +8,7 @@ import { iconUrl } from '../../ui/icons'
 import { runtime } from '../runtime'
 import { slide } from '../slide/slideControl'
 import { drainTrainFx } from './fxQueue'
-import { spawnAround, spawnPopup, updatePopups } from './popups'
+import { spawnPopup, spawnScattered, updatePopups } from './popups'
 
 const _at = new Vector3()
 const SLIDE_ICON = iconUrl('slide')
@@ -21,8 +21,8 @@ function showGain(event) {
   const at = riding ? slide.position : runtime.player.position
   const follow = riding ? slide.position : null
   if (riding) {
-    // Riding: fanned out round you on screen with the trophies, not piled on top.
-    spawnAround(`+${formatGain(event.gain)}`, slide.position, 1.2, RIDING_GAIN)
+    // Riding: scattered over the screen with the trophies.
+    spawnScattered(`+${formatGain(event.gain)}`, RIDING_GAIN)
   } else {
     _at.set(at.x + (Math.random() - 0.5) * 3, at.y + 0.8 + Math.random() * 1.2, at.z + (Math.random() - 0.5) * 1.5)
     spawnPopup(`+${formatGain(event.gain)}`, _at, { iconUrl: SLIDE_ICON })

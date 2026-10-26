@@ -2,17 +2,17 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   AdditiveBlending,
-  BoxGeometry,
   BufferAttribute,
   BufferGeometry,
   Color,
   CylinderGeometry,
+  DoubleSide,
   InstancedMesh,
   Matrix4,
-  MeshBasicMaterial,
   Points,
   PointsMaterial,
   Quaternion,
+  ShaderMaterial,
   TorusGeometry,
   Vector3,
 } from 'three'
@@ -24,11 +24,12 @@ import { mulberry32 } from '@shared/rng'
 import { CANYON_HALF_WIDTH } from '@shared/world'
 
 import { sfx } from '../../audio/sfx'
-import { getGame } from '../../store/game'
+import { getGame, useGame } from '../../store/game'
 import { getQuality, useQuality } from '../../store/quality'
 import { iconUrl } from '../../ui/icons'
 import { BlockSet, createToyInstances, disposeBlocks, PropBuilder } from '../blocks'
-import { spawnAround } from '../fx/popups'
+import { boardGlow } from '../board'
+import { spawnScattered } from '../fx/popups'
 import { LabelBatch } from '../labels/LabelBatch'
 import { sharedMaterials, STYLE } from '../materials'
 import { runtime } from '../runtime'
@@ -37,6 +38,7 @@ import { skyUniforms } from '../skyState'
 import { writeDistance, writeZone } from './hudLink'
 import { slopeBoxMatrix, surfaceY, trackPoint, weaveX, zAt } from './path'
 import SlideFX from './SlideFX'
+import SpeedBlur from './SpeedBlur'
 import { advanceSlide, slide } from './slideControl'
 import { buildChunk, CHUNK, GATES, RIM_X, WALL_H, WALL_RUN, ZONE_THEMES } from './track'
 
@@ -122,7 +124,7 @@ const LAND_SHAKE_MS = 160
 /** At most one trophy popup this often; the trophies in between are summed into it. */
 const TROPHY_POPUP_MS = 180
 const TROPHY_ICON = iconUrl('trophy')
-/** Trophy popups fan out round the rider (see spawnAround), a touch bigger than gains. */
+/** Trophy popups are scattered over the screen (see spawnScattered), a touch bigger than gains. */
 const TROPHY_POPUP = { iconUrl: TROPHY_ICON, scale: 1.2 }
 
 /** Built chunks by index. Module-level: one canyon exists at a time. */
@@ -134,11 +136,73 @@ const showIfWanted = (mesh, i) => {
   mesh.visible = i >= trackWindow.first && i <= trackWindow.last
 }
 
-/** Speed-line streaks, made once. */
+/**
+ * Speed-line streaks, made once: alternately down the left and right of the view (well
+ * clear of the rider and the distance counter), each a little thicker or longer than
+ * the next, and every third tinted with your board's glow.
+ */
 const streakState = (() => {
   const r = mulberry32(5)
-  return Array.from({ length: STREAKS }, () => ({ a: r() * Math.PI * 2, r: 1.6 + r() * 3.2, z: -r() * 30 }))
+  return Array.from({ length: STREAKS }, (_, i) => ({
+    a: (i % 2 ? 0 : Math.PI) + (r() - 0.5) * 1.6,
+    r: 2.8 + r() * 4,
+    z: -r() * 30,
+    width: 0.06 + r() * 0.06,
+    length: 0.7 + r() * 0.6,
+    tinted: i % 3 === 0,
+  }))
 })()
+/** Speed lines fade in between these speeds (m/s). */
+const STREAKS_FROM = 20
+const STREAKS_FULL = 70
+const WHITE = new Color('#ffffff')
+const _tint = new Color()
+
+/**
+ * A speed line: two crossed quads, so it's thin from any angle. uv.x runs across it,
+ * uv.y along it, from the tail (0) to the head (1, the end it travels towards).
+ */
+function createStreakGeometry() {
+  const geometry = new BufferGeometry()
+  const positions = [-0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5, 0, -0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5]
+  const uvs = [0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1]
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  geometry.setAttribute('uv', new BufferAttribute(new Float32Array(uvs), 2))
+  geometry.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7])
+  return geometry
+}
+
+const streakVertexShader = /* glsl */ `
+  varying vec2 vUv;
+  varying float vDepth;
+  varying vec3 vColor;
+  void main() {
+    vUv = uv;
+    vColor = vec3(1.0);
+    #ifdef USE_INSTANCING_COLOR
+      vColor = instanceColor;
+    #endif
+    vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+    vDepth = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }
+`
+
+const streakFragmentShader = /* glsl */ `
+  uniform float uOpacity;
+  varying vec2 vUv;
+  varying float vDepth;
+  varying vec3 vColor;
+  void main() {
+    // Soft-edged across; a long tail fading out behind a bright, rounded head.
+    float across = 1.0 - abs(vUv.x * 2.0 - 1.0);
+    float along = smoothstep(0.0, 0.75, vUv.y) * (1.0 - smoothstep(0.9, 1.0, vUv.y));
+    // Gone before it reaches the lens (no fat bars across the screen), and faint far off.
+    float depth = smoothstep(1.5, 6.0, vDepth) * (1.0 - smoothstep(24.0, 34.0, vDepth));
+    gl_FragColor = vec4(vColor, across * across * along * depth * uOpacity);
+    #include <colorspace_fragment>
+  }
+`
 
 const ZONE_SKIES = ZONES.map((z) => ZONE_THEMES[z.id].sky.map((c) => new Color(c)))
 const ZONE_NAME_GRADIENTS = ZONES.map((z) => {
@@ -202,6 +266,8 @@ export default function Slide() {
   const warpRef = useRef(null)
   const trophyRef = useRef(null)
   const streakRef = useRef(null)
+  /** The slide (its startedAt) the speed lines were last tinted for. */
+  const streakTintedFor = useRef(-1)
   const starsRef = useRef(null)
   const gatesRef = useRef(null)
   const startedFor = useRef(0)
@@ -213,19 +279,25 @@ export default function Slide() {
   const baseFov = useRef(60)
   const speedLines = useQuality((s) => s.settings.speedLines)
   const particles = useQuality((s) => s.settings.particles)
+  const motionBlur = useQuality((s) => s.settings.motionBlur)
+  const antialias = useQuality((s) => s.antialias)
+  const sliding = useGame((s) => Boolean(s.slide))
 
   const assets = useMemo(() => {
     const trophies = createToyInstances(createTrophyGeometry(), sharedMaterials().toy, MAX_TROPHIES)
 
-    const streakMaterial = new MeshBasicMaterial({
-      color: '#ffffff',
+    const streakMaterial = new ShaderMaterial({
+      uniforms: { uOpacity: { value: 0 } },
+      vertexShader: streakVertexShader,
+      fragmentShader: streakFragmentShader,
       transparent: true,
-      opacity: 0.55,
       blending: AdditiveBlending,
       depthWrite: false,
-      fog: false,
+      side: DoubleSide,
     })
-    const streakMesh = new InstancedMesh(new BoxGeometry(0.035, 0.035, 1), streakMaterial, STREAKS)
+    const streakMesh = new InstancedMesh(createStreakGeometry(), streakMaterial, STREAKS)
+    // Colours exist from the start, so the shader is compiled with them once.
+    for (let i = 0; i < STREAKS; i += 1) streakMesh.setColorAt(i, WHITE)
     streakMesh.frustumCulled = false
     streakMesh.count = 0
 
@@ -384,10 +456,10 @@ export default function Slide() {
         writeZone(ZONES[zi].name, ZONE_NAME_GRADIENTS[zi])
       }
 
-      // The rush of air, swelling with your speed, gone once you stop.
+      // The sound of the ride, swelling with your speed, gone once you stop.
       if (!slide.stopped && speed > 4) {
         sfx.windStart()
-        sfx.windSet(speed / 120)
+        sfx.windSet(speed / 120, slide.airborne, slide.skid)
       } else if (slide.stopped) {
         sfx.windStop()
       }
@@ -488,7 +560,7 @@ export default function Slide() {
       }
       if (tally.pending > 0 && now - tally.shownAt >= TROPHY_POPUP_MS) {
         const multiplier = winsMultiplier(getGame().profile, Date.now())
-        spawnAround(`+${formatNumber(Math.round(tally.pending * multiplier))}`, slide.position, 1.2, TROPHY_POPUP)
+        spawnScattered(`+${formatNumber(Math.round(tally.pending * multiplier))}`, TROPHY_POPUP)
         sfx.trophy()
         tally.pending = 0
         tally.shownAt = now
@@ -538,20 +610,30 @@ export default function Slide() {
     // --- Speed lines --------------------------------------------------------------
     const lines = streakRef.current
     if (lines) {
-      const active = slide.active && !slide.stopped && speedLines && speed > 20
+      const active = slide.active && !slide.stopped && speedLines && speed > STREAKS_FROM
       if (!active) {
         lines.count = 0
       } else {
-        const travel = Math.min(speed, 400) * delta * 0.6
+        if (streakTintedFor.current !== slide.startedAt) {
+          // Once a slide: the tinted ones take this board's glow, softened towards white.
+          streakTintedFor.current = slide.startedAt
+          _tint.copy(boardGlow(getGame().profile.equippedBoard)).lerp(WHITE, 0.35)
+          for (let i = 0; i < STREAKS; i += 1) lines.setColorAt(i, streakState[i].tinted ? _tint : WHITE)
+          lines.instanceColor.needsUpdate = true
+        }
+        const fast = Math.min(speed, 400)
+        lines.material.uniforms.uOpacity.value = smoothstep(STREAKS_FROM, STREAKS_FULL, speed)
+        const travel = fast * delta * 0.6
         lines.count = STREAKS
         for (let i = 0; i < STREAKS; i += 1) {
           const st = streakState[i]
           st.z += travel
           if (st.z > 4) st.z -= 34
-          _v.set(Math.cos(st.a) * st.r, Math.sin(st.a) * st.r * 0.7, st.z - 4)
+          // A wide oval: out to the sides more than up and down.
+          _v.set(Math.cos(st.a) * st.r * 1.15, Math.sin(st.a) * st.r * 0.75, st.z - 4)
           _v.applyQuaternion(camera.quaternion).add(camera.position)
           _q.copy(camera.quaternion)
-          _s.set(1, 1, 2 + Math.min(speed, 400) * 0.02)
+          _s.set(st.width, st.width, (2 + fast * 0.02) * st.length)
           lines.setMatrixAt(i, _m.compose(_v, _q, _s))
         }
         lines.instanceMatrix.needsUpdate = true
@@ -568,6 +650,7 @@ export default function Slide() {
       <primitive ref={streakRef} object={assets.streakMesh} />
       <primitive ref={starsRef} object={assets.stars} />
       <SlideFX />
+      {sliding && motionBlur > 0 && <SpeedBlur samples={motionBlur} antialias={antialias} />}
     </group>
   )
 }

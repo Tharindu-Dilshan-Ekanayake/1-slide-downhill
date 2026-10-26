@@ -13,6 +13,8 @@ const MUTE_KEY = 'pp.muted'
 
 let ctx = null
 let master = null
+/** Input of the echo the chimes ring out into (see createEcho). */
+let echo = null
 let noiseBuffer = null
 let music = null
 let muted = readMuted()
@@ -38,12 +40,33 @@ function unlock() {
   master = ctx.createGain()
   master.gain.value = muted ? 0 : 0.5
   master.connect(ctx.destination)
+  echo = createEcho()
   // One second of white noise, reused by every whoosh and crack.
   noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
   const data = noiseBuffer.getChannelData(0)
   for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1
   music = createMusic(ctx, master, noiseBuffer)
   music.start()
+}
+
+/**
+ * A short, darkening echo for the chimes to ring out into, so they sparkle instead of
+ * clicking off. Built once; every sound sent to it shares it.
+ */
+function createEcho() {
+  const input = ctx.createGain()
+  input.gain.value = 0.25
+  const delay = ctx.createDelay(1)
+  delay.delayTime.value = 0.13
+  const damp = ctx.createBiquadFilter()
+  damp.type = 'lowpass'
+  damp.frequency.value = 3200
+  const feedback = ctx.createGain()
+  feedback.gain.value = 0.32
+  input.connect(delay)
+  delay.connect(damp).connect(feedback).connect(delay)
+  damp.connect(master)
+  return input
 }
 
 /** Installs the first-gesture unlock. Call once at startup. */
@@ -81,50 +104,81 @@ export function onMutedChange(listener) {
   return () => muteListeners.delete(listener)
 }
 
-// --- Wind: the rush of air while you slide -----------------------------------------
+// --- The ride: the sound of the board going down the hill -----------------------------
 
-let wind = null
-let windSetAt = 0
+let ride = null
+let rideSetAt = 0
 
 /**
- * A looping band of filtered noise. `windSet(level)` (0..1, from your speed down the
- * hill) opens it up and brightens it; the music ducks under it until `windStop`.
+ * One looping noise source through three bands: the rush of air (swelling with speed,
+ * loudest in the air), the board rumbling over the ground (its bumps quickening with
+ * speed, silent in the air) and the hiss of its edge carving (up as it skids). The
+ * music ducks under it until `windStop`.
  */
 function windStart() {
-  if (!ctx || wind || ctx.state !== 'running') return
+  if (!ctx || ride || ctx.state !== 'running') return
   const src = ctx.createBufferSource()
   src.buffer = noiseBuffer
   src.loop = true
-  const filter = ctx.createBiquadFilter()
-  filter.type = 'bandpass'
-  filter.Q.value = 0.7
-  filter.frequency.value = 400
-  const gain = ctx.createGain()
-  gain.gain.value = 0.0001
-  src.connect(filter).connect(gain).connect(master)
+  const band = (type, frequency, q) => {
+    const filter = ctx.createBiquadFilter()
+    filter.type = type
+    filter.frequency.value = frequency
+    filter.Q.value = q
+    const gain = ctx.createGain()
+    gain.gain.value = 0.0001
+    src.connect(filter).connect(gain).connect(master)
+    return { filter, gain }
+  }
+  const air = band('bandpass', 400, 0.7)
+  const rumble = band('lowpass', 220, 0.9)
+  const carve = band('highpass', 3800, 0.7)
+  // Bumps in the ground: the rumble's loudness wobbles, faster the faster you go.
+  const bumps = ctx.createOscillator()
+  bumps.frequency.value = 7
+  const depth = ctx.createGain()
+  depth.gain.value = 0
+  bumps.connect(depth).connect(rumble.gain.gain)
+  bumps.start()
   src.start()
-  wind = { src, filter, gain }
+  ride = { src, bumps, depth, air, rumble, carve }
   music?.duck(true)
 }
 
-function windSet(level) {
-  if (!wind) return
+/**
+ * `level` 0..1 from your speed down the hill; `airborne` off a ramp; `skid` the board's
+ * sideways skid (radians). Positional, not an object: it's called every frame.
+ */
+function windSet(level, airborne = false, skid = 0) {
+  if (!ride) return
   // Ten updates a second is plenty for a smooth swell.
   const now = performance.now()
-  if (now - windSetAt < 100) return
-  windSetAt = now
+  if (now - rideSetAt < 100) return
+  rideSetAt = now
   const t = ctx.currentTime
   const l = Math.min(1, Math.max(0, level))
-  wind.gain.gain.setTargetAtTime(0.03 + l * 0.2, t, 0.2)
-  wind.filter.frequency.setTargetAtTime(320 + l * 2400, t, 0.25)
+  const ground = airborne ? 0 : 1
+  ride.air.gain.gain.setTargetAtTime(0.03 + l * (airborne ? 0.26 : 0.17), t, 0.2)
+  ride.air.filter.frequency.setTargetAtTime(320 + l * 2400 + (airborne ? 500 : 0), t, 0.25)
+  const rumble = ground * (0.04 + l * 0.14)
+  ride.rumble.gain.gain.setTargetAtTime(rumble, t, 0.08)
+  ride.depth.gain.setTargetAtTime(rumble * 0.6, t, 0.08)
+  ride.rumble.filter.frequency.setTargetAtTime(160 + l * 380, t, 0.2)
+  ride.bumps.frequency.setTargetAtTime(6 + l * 16, t, 0.2)
+  ride.carve.gain.gain.setTargetAtTime(ground * (0.008 + l * 0.03 + Math.min(1, Math.abs(skid)) * 0.06), t, 0.1)
 }
 
 function windStop() {
-  if (!wind) return
-  const { src, gain } = wind
-  wind = null
-  gain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.3)
-  src.stop(ctx.currentTime + 1.5)
+  if (!ride) return
+  const { src, bumps, depth, air, rumble, carve } = ride
+  ride = null
+  const t = ctx.currentTime
+  air.gain.gain.setTargetAtTime(0.0001, t, 0.3)
+  rumble.gain.gain.setTargetAtTime(0.0001, t, 0.3)
+  carve.gain.gain.setTargetAtTime(0.0001, t, 0.3)
+  depth.gain.setTargetAtTime(0, t, 0.3)
+  src.stop(t + 1.5)
+  bumps.stop(t + 1.5)
   music?.duck(false)
 }
 
@@ -136,8 +190,8 @@ function ready(name, minGapMs = 0) {
   return true
 }
 
-/** A short enveloped oscillator note. */
-function tone(freq, { type = 'sine', at = 0, duration = 0.12, volume = 0.3, slideTo = null } = {}) {
+/** A short enveloped oscillator note; `echo` also sends it into the echo. */
+function tone(freq, { type = 'sine', at = 0, duration = 0.12, volume = 0.3, slideTo = null, attack = 0.01, echo: wet = false } = {}) {
   const t = ctx.currentTime + at
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
@@ -145,12 +199,27 @@ function tone(freq, { type = 'sine', at = 0, duration = 0.12, volume = 0.3, slid
   osc.frequency.setValueAtTime(freq, t)
   if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + duration)
   gain.gain.setValueAtTime(0.0001, t)
-  gain.gain.exponentialRampToValueAtTime(volume, t + 0.01)
+  gain.gain.exponentialRampToValueAtTime(volume, t + attack)
   gain.gain.exponentialRampToValueAtTime(0.0001, t + duration)
   osc.connect(gain).connect(master)
+  if (wet) gain.connect(echo)
   osc.start(t)
   osc.stop(t + duration + 0.02)
 }
+
+/** A struck bell: the note, a quieter octave and a glassy strike, ringing into the echo. */
+function bell(freq, { at = 0, volume = 0.1, decay = 0.4 } = {}) {
+  tone(freq, { at, duration: decay, volume, echo: true })
+  tone(freq * 2, { at, duration: decay * 0.6, volume: volume * 0.35, echo: true })
+  tone(freq * 3.01, { type: 'triangle', at, duration: 0.05, volume: volume * 0.3 })
+}
+
+/** Trophy chimes climb and fall this scale while they keep coming (C major pentatonic). */
+const TROPHY_SCALE = [1047, 1175, 1319, 1568, 1760, 2093, 2349, 2637]
+/** A trophy within this long of the last carries the run on; otherwise it starts again. */
+const TROPHY_RUN_MS = 700
+let trophyRun = 0
+let trophyAt = 0
 
 /** Filtered noise: whooshes and cracks. */
 function noise({ at = 0, duration = 0.3, volume = 0.25, from = 400, to = 2400, q = 1.2 } = {}) {
@@ -167,6 +236,8 @@ function noise({ at = 0, duration = 0.3, volume = 0.25, from = 400, to = 2400, q
   gain.gain.exponentialRampToValueAtTime(volume, t + duration * 0.3)
   gain.gain.exponentialRampToValueAtTime(0.0001, t + duration)
   src.connect(filter).connect(gain).connect(master)
+  // Looped, so a long one from a random spot never runs off the end of the second.
+  src.loop = true
   src.start(t, Math.random() * 0.5)
   src.stop(t + duration + 0.02)
 }
@@ -183,11 +254,13 @@ export const sfx = {
     if (!ready('levelUp')) return
     ;[523, 659, 784, 1047].forEach((f, i) => tone(f, { type: 'square', at: i * 0.07, duration: 0.14, volume: 0.09 }))
   },
-  /** Pushing off down the hill: a whoosh and a rising boing. */
+  /** Pushing off down the hill: a kick, a whoosh, a rising boing and a sparkle. */
   slideStart() {
     if (!ready('slideStart')) return
-    noise({ duration: 0.6, volume: 0.3, from: 250, to: 2600 })
-    tone(220, { type: 'triangle', duration: 0.3, volume: 0.09, slideTo: 660 })
+    tone(110, { duration: 0.18, volume: 0.16, slideTo: 55 })
+    noise({ duration: 0.7, volume: 0.3, from: 250, to: 3000, q: 0.8 })
+    tone(220, { type: 'triangle', duration: 0.32, volume: 0.09, slideTo: 660 })
+    bell(1319, { at: 0.2, volume: 0.05, decay: 0.3 })
   },
   /** The board popping out in front of you when you press SLIDE: a springy bloop. */
   boardPop() {
@@ -199,20 +272,35 @@ export const sfx = {
   jumpWhoosh() {
     if (ready('jumpWhoosh', 250)) noise({ duration: 0.4, volume: 0.18, from: 500, to: 2600, q: 0.9 })
   },
-  /** The board slapping back down after a jump. */
+  /** The board slapping back down after a jump: a thump and a crunch of snow. */
   boardLand() {
     if (!ready('boardLand', 250)) return
-    tone(170, { type: 'sine', duration: 0.16, volume: 0.16, slideTo: 70 })
-    noise({ duration: 0.18, volume: 0.12, from: 1600, to: 300, q: 0.7 })
+    tone(160, { type: 'sine', duration: 0.2, volume: 0.18, slideTo: 55 })
+    noise({ duration: 0.24, volume: 0.13, from: 2400, to: 300, q: 0.6 })
   },
+  /**
+   * A trophy slid through: a bell that climbs the scale and back down while they keep
+   * coming, so a run of them plays a little tune.
+   */
   trophy() {
     if (!ready('trophy', 90)) return
-    tone(1319, { type: 'triangle', duration: 0.08, volume: 0.1 })
-    tone(1760, { type: 'triangle', at: 0.06, duration: 0.1, volume: 0.1 })
+    const now = performance.now()
+    trophyRun = now - trophyAt < TROPHY_RUN_MS ? trophyRun + 1 : 0
+    trophyAt = now
+    const n = TROPHY_SCALE.length
+    const k = trophyRun % (2 * n - 2)
+    bell(TROPHY_SCALE[k < n ? k : 2 * n - 2 - k], { volume: 0.085, decay: 0.32 })
   },
+  /** Wins paid out (a slide's total, a badge): a fanfare, a shimmering chord and a shower of coins. */
   wins() {
     if (!ready('wins')) return
-    ;[988, 1319, 1568, 1976].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.06, duration: 0.18, volume: 0.13 }))
+    ;[784, 988, 1175, 1568].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.07, duration: 0.2, volume: 0.1, echo: true }))
+    // G major, held, each voice doubled a hair apart so it shimmers.
+    for (const f of [784, 988, 1175]) {
+      tone(f * 1.003, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05, echo: true })
+      tone(f * 0.997, { at: 0.28, duration: 0.9, volume: 0.045, attack: 0.05 })
+    }
+    for (let i = 0; i < 6; i += 1) bell(2093 + Math.random() * 1200, { at: 0.3 + i * 0.07 + Math.random() * 0.03, volume: 0.035, decay: 0.2 })
   },
   crack() {
     if (!ready('crack', 150)) return
@@ -251,11 +339,17 @@ export const sfx = {
     tone(140, { type: 'sine', duration: 0.12, volume: 0.12, slideTo: 70 })
     noise({ duration: 0.08, volume: 0.06, from: 900, to: 300, q: 0.7 })
   },
-  /** Coming to a stop at the end of a slide: a scrape and a thud. */
+  /**
+   * The skid to a stop, timed to end as you do: snow spraying off the board's edge
+   * (bright, then darker as it slows), the board grinding under it, then a bump and a
+   * little bounce as you stop.
+   */
   slideStop() {
     if (!ready('slideStop')) return
-    tone(120, { type: 'sine', duration: 0.25, volume: 0.18, slideTo: 55 })
-    noise({ duration: 0.5, volume: 0.14, at: 0.04, from: 1400, to: 250, q: 0.6 })
+    noise({ duration: 0.85, volume: 0.2, from: 5200, to: 700, q: 0.5 })
+    noise({ duration: 0.8, volume: 0.12, from: 380, to: 120, q: 0.9 })
+    tone(130, { at: 0.82, duration: 0.22, volume: 0.16, slideTo: 60 })
+    tone(220, { type: 'triangle', at: 0.96, duration: 0.1, volume: 0.05, slideTo: 330 })
   },
   windStart,
   windSet,
