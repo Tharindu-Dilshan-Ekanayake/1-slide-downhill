@@ -8,6 +8,8 @@ import { schema, t } from '@colyseus/schema'
 export const PlayerState = schema(
   {
     name: t.string(),
+    /** Their Boxity account id ('' for a guest), verified: matches chat senders to characters. */
+    uid: t.string(),
     x: t.float32(),
     y: t.float32(),
     z: t.float32(),

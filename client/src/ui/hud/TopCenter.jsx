@@ -60,7 +60,7 @@ function HintBanner() {
 /** Top centre: the playtime gift counting down, and under it the hint. */
 export function TopCenter() {
   return (
-    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ top: u(76), gap: u(40) }}>
+    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ top: `calc(${u(76)} + var(--top-lift))`, gap: u(40) }}>
       <GiftTimer />
       <HintBanner />
     </div>

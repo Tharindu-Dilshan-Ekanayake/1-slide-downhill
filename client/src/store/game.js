@@ -54,6 +54,8 @@ export const useGame = create((set, get) => ({
   hatch: null,
   /** Keep hatching the egg you're standing at (the T button). Client-side only. */
   autoHatch: false,
+  /** Boxity is showing an ad break: the game is paused and silent until it ends. */
+  adBreak: false,
 
 
   // --- Actions -----------------------------------------------------------------
@@ -69,6 +71,7 @@ export const useGame = create((set, get) => ({
 
   openPanel: (panel, panelData = null) => set({ panel, panelData }),
   closePanel: () => set({ panel: null, panelData: null }),
+  setAdBreak: (adBreak) => set({ adBreak }),
   togglePanel: (panel) => set((s) => (s.panel === panel ? { panel: null, panelData: null } : { panel, panelData: null })),
 
   /** kind: 'info' | 'error' | 'success' | 'badge' */

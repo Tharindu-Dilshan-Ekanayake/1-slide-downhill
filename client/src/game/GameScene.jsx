@@ -4,6 +4,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { WebGLRenderer } from 'three'
 
 import { useBloxity } from '../bloxity/BloxityContext'
+import { platform } from '../bloxity/platform'
+import { useGame } from '../store/game'
 import { useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
 import BlobShadows from './BlobShadows'
@@ -23,6 +25,7 @@ import Lighting from './Lighting'
 import PerfProbe from './PerfProbe'
 import Player from './Player'
 import ShaderWarmup from './ShaderWarmup'
+import { runtime } from './runtime'
 import { FOG, SKY } from './sceneStyle'
 import Sky from './Sky'
 import World from './world/World'
@@ -66,6 +69,23 @@ function ViewDistance({ far }) {
 }
 
 /**
+ * A wider lens held upright: the field of view is vertical, so on a tall, narrow screen
+ * 60 degrees leaves little either side of you. Widened up to 78 as the screen narrows.
+ * Left alone while sliding (the slide drives the lens and returns it to this after).
+ */
+const BASE_FOV = 60
+function OrientationLens() {
+  useFrame(({ camera, size }) => {
+    const aspect = size.width / Math.max(1, size.height)
+    const want = aspect >= 1 ? BASE_FOV : BASE_FOV + Math.min(18, (1 - aspect) * 34)
+    if (runtime.camera.mode === 'slide' || Math.abs(camera.fov - want) < 0.01) return
+    camera.fov = want
+    camera.updateProjectionMatrix()
+  })
+  return null
+}
+
+/**
  * The 3D view. Owns the renderer lifecycle: quality-driven settings, automatic preset
  * drops when FPS falls under budget, and recovery from a lost WebGL context.
  *
@@ -74,6 +94,7 @@ function ViewDistance({ far }) {
  */
 export function GameScene({ onReady }) {
   const { game } = useBloxity()
+  const adBreak = useGame((s) => s.adBreak)
   const settings = useQuality((s) => s.settings)
   const antialias = useQuality((s) => s.antialias)
   const degrade = useQuality((s) => s.degrade)
@@ -99,6 +120,7 @@ export function GameScene({ onReady }) {
     readySent.current = true
     performance.mark('pp:ready')
     game.loadingEnd()
+    platform.gameplayStart()
     onReady?.()
   }, [warmedUp, firstFrame, game, onReady])
 
@@ -156,6 +178,8 @@ export function GameScene({ onReady }) {
     <>
       <Canvas
         key={contextKey}
+        // Stopped outright during a Boxity ad break, resumed after.
+        frameloop={adBreak ? 'never' : 'always'}
         dpr={dpr}
         gl={createRenderer}
         // PCF, not R3F's default "soft": three r18x removed PCFSoftShadowMap.
@@ -168,6 +192,7 @@ export function GameScene({ onReady }) {
       >
         <fog attach="fog" args={[FOG.color, settings.fogNear, settings.viewDistance * 0.95]} />
         <ViewDistance far={settings.viewDistance} />
+        <OrientationLens />
         <PerformanceMonitor bounds={() => [45, Infinity]} onDecline={handleDecline} />
 
         <Sky />

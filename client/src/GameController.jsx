@@ -59,7 +59,8 @@ export function GameController() {
 
   useEffect(() => {
     if (!settled) return undefined
-    startConnection({ id: playerId || guestId(), name: nameRef.current })
+    const guest = guestId()
+    startConnection({ id: playerId || guest, guestId: guest, signedIn: Boolean(playerId), name: nameRef.current })
     return stopConnection
   }, [settled, playerId])
 

@@ -1,13 +1,24 @@
-# Ships +1 Slide Downhill to Bloxity Legion: the dev branch to the dev channel, main to prod.
+# Ships +1 Slide Downhill to Boxity Legion: the dev branch to the dev (playtest)
+# channel, main to production - on Boxity's production platform (bloxity.io) always,
+# and on its stage platform (stage.bloxity.io) too once LEGION_DEPLOY_TOKEN_STAGE is
+# set. Each platform is its own job, so a stage failure never blocks or undoes prod.
 #
-#   server   -> Docker image in this repo's GitHub Container Registry, then Legion rolls
-#               it out (https://1-slide-downhill.host.bloxity.io / .dev.host.bloxity.io)
-#   frontend -> the built client, served at https://1-slide-downhill.play.bloxity.io
-#               (prod) and https://1-slide-downhill.dev.play.bloxity.io (dev)
+#   server   -> Docker image in this repo's GitHub Container Registry (tagged per
+#               platform), then Legion rolls it out (1-slide-downhill.host.<platform>)
+#   frontend -> the built client, served at 1-slide-downhill.play.<platform> (prod
+#               channel) and 1-slide-downhill.dev.play.<platform> (dev channel)
 #
-# Needs one repository secret: LEGION_DEPLOY_TOKEN (Settings -> Secrets and variables
-# -> Actions). After the first run, make the ghcr.io package public so Legion can pull
-# it (repo -> Packages -> 1-slide-downhill-server -> Package settings -> Change visibility).
+# One build for both platforms: the platform tells the game where it is at runtime
+# (window.BLOXITY_ENV), so no environment or Boxity URL goes into the client build.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   LEGION_DEPLOY_TOKEN        from hosting.bloxity.io (required)
+#   LEGION_DEPLOY_TOKEN_STAGE  from hosting.stage.bloxity.io (optional: turns stage on)
+# After the first run, make the ghcr.io package public so Legion can pull it
+# (repo -> Packages -> 1-slide-downhill-server -> Package settings -> Change visibility).
+#
+# Run it by hand (Actions -> Deploy to Bloxity Legion -> Run workflow) to ship any
+# branch to one platform.
 
 name: Deploy to Bloxity Legion
 
@@ -15,34 +26,83 @@ on:
   push:
     branches: [dev, main]
   workflow_dispatch:
+    inputs:
+      target:
+        description: Platform to deploy to
+        type: choice
+        options: [staging, prod]
+        default: staging
 
 env:
   GAME_ID: 1-slide-downhill
-  # Players per room (the Colyseus room's maxClients); a full pod makes Legion start another.
-  SEAT_CAP: 8
-
-concurrency:
-  group: deploy-${{ github.ref_name }}
-  cancel-in-progress: false
+  # Players per room (the Colyseus room's maxClients). Boxity decides how many rooms and
+  # how much CPU each pod gets from what it measures, so no seatCap here.
+  ROOM_SIZE: 8
 
 jobs:
-  server:
+  targets:
     runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.pick.outputs.list }}
+    steps:
+      - name: Pick the platforms
+        id: pick
+        env:
+          MANUAL_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || '' }}
+          HAS_STAGE_TOKEN: ${{ secrets.LEGION_DEPLOY_TOKEN_STAGE != '' }}
+        run: |
+          if [ -n "$MANUAL_TARGET" ]; then
+            list="[\"$MANUAL_TARGET\"]"
+          elif [ "$HAS_STAGE_TOKEN" = "true" ]; then
+            list='["prod","staging"]'
+          else
+            list='["prod"]'
+          fi
+          echo "Deploying to $list"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.list) }}
+    name: deploy (${{ matrix.target }})
+    concurrency:
+      group: deploy-${{ matrix.target }}-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
-    outputs:
-      channel: ${{ steps.meta.outputs.channel }}
+    env:
+      # Each platform has its own token and endpoints; staging never touches prod's.
+      DEPLOY_TOKEN: ${{ matrix.target == 'staging' && secrets.LEGION_DEPLOY_TOKEN_STAGE || secrets.LEGION_DEPLOY_TOKEN }}
+      API_URL: ${{ matrix.target == 'staging' && 'https://api.stage.bloxity.io' || 'https://api.bloxity.io' }}
+      LEGION_URL: ${{ matrix.target == 'staging' && 'https://legion.stage.bloxity.io' || 'https://legion.bloxity.io' }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the deploy token
+        run: |
+          if [ -z "$DEPLOY_TOKEN" ]; then
+            if [ "${{ matrix.target }}" = "staging" ]; then
+              echo "::error::LEGION_DEPLOY_TOKEN_STAGE is not set. Add it from hosting.stage.bloxity.io to deploy to stage."
+            else
+              echo "::error::LEGION_DEPLOY_TOKEN is not set. Add it from hosting.bloxity.io."
+            fi
+            exit 1
+          fi
 
       - name: Channel and image name
         id: meta
         run: |
           if [ "$GITHUB_REF_NAME" = "main" ]; then channel=prod; else channel=dev; fi
+          # Per-platform tags, so a staging build never replaces a production image.
+          if [ "${{ matrix.target }}" = "staging" ]; then prefix=stage-; else prefix=; fi
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/$owner/$GAME_ID-server:$channel-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$owner/$GAME_ID-server:${prefix}$channel-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -53,19 +113,11 @@ jobs:
           docker push "${{ steps.meta.outputs.image }}"
 
       - name: Roll it out on Legion
-        env:
-          LEGION_DEPLOY_TOKEN: ${{ secrets.LEGION_DEPLOY_TOKEN }}
         run: |
-          curl -sS --fail-with-body -X POST "https://legion.bloxity.io/v1/apps/$GAME_ID/deploy" \
-            -H "Authorization: Bearer $LEGION_DEPLOY_TOKEN" \
+          curl -sS --fail-with-body -X POST "$LEGION_URL/v1/apps/$GAME_ID/deploy" \
+            -H "Authorization: Bearer $DEPLOY_TOKEN" \
             -H 'Content-Type: application/json' \
-            -d "{\"channel\":\"${{ steps.meta.outputs.channel }}\",\"image\":\"${{ steps.meta.outputs.image }}\",\"version\":\"$GITHUB_SHA\",\"seatCap\":$SEAT_CAP}"
-
-  frontend:
-    needs: server
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+            -d "{\"channel\":\"${{ steps.meta.outputs.channel }}\",\"image\":\"${{ steps.meta.outputs.image }}\",\"version\":\"$GITHUB_SHA\",\"roomSize\":$ROOM_SIZE}"
 
       - uses: actions/setup-node@v4
         with:
@@ -76,22 +128,17 @@ jobs:
       - name: Build the client
         working-directory: client
         env:
-          # Join through Legion's matchmaker; the Bloxity SDK identifies the game by slug.
+          # The hosting id the client asks Boxity's matchmaker for - not an environment.
           VITE_LEGION_GAME_ID: ${{ env.GAME_ID }}
-          VITE_GAME_SLUG: ${{ env.GAME_ID }}
-          VITE_BLOXITY_PORTAL_URL: https://bloxity.io
-          VITE_BLOXITY_API_URL: https://api.bloxity.io
         run: |
           npm ci
           npm run build
 
-      - name: Upload it to Legion
-        env:
-          LEGION_DEPLOY_TOKEN: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+      - name: Upload the frontend to Legion
         run: |
           (cd client/dist && zip -qr ../../build.zip .)
           curl -sS --fail-with-body -X POST \
-            "https://api.bloxity.io/v1/hosting/games/$GAME_ID/frontend?channel=${{ needs.server.outputs.channel }}&version=$GITHUB_SHA" \
-            -H "Authorization: Bearer $LEGION_DEPLOY_TOKEN" \
+            "$API_URL/v1/hosting/games/$GAME_ID/frontend?channel=${{ steps.meta.outputs.channel }}&version=$GITHUB_SHA" \
+            -H "Authorization: Bearer $DEPLOY_TOKEN" \
             -H 'Content-Type: application/zip' \
             --data-binary @build.zip

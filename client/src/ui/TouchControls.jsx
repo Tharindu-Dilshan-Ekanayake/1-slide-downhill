@@ -101,7 +101,8 @@ export function TouchControls() {
   return (
     <>
       <div
-        className="absolute bottom-0 left-0 z-10 h-[62%] w-[42%] touch-none"
+        className="absolute z-10 h-[62%] w-[42%] touch-none"
+        style={{ left: 'env(safe-area-inset-left, 0px)', bottom: 'env(safe-area-inset-bottom, 0px)' }}
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
@@ -131,7 +132,7 @@ export function TouchControls() {
         type="button"
         aria-label="Jump"
         className="pp-btn pp-chunky absolute z-20 flex touch-none items-center justify-center rounded-full text-white"
-        style={{ ...roundButton(70, GRADIENTS.slate), right: 14, bottom: 14 }}
+        style={{ ...roundButton(70, GRADIENTS.slate), right: 'calc(14px + env(safe-area-inset-right, 0px))', bottom: 'calc(14px + env(safe-area-inset-bottom, 0px))' }}
         onPointerDown={(e) => {
           e.preventDefault()
           runtime.input.jump = true

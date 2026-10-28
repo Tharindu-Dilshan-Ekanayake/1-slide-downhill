@@ -2,6 +2,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  DoubleSide,
   Matrix4,
   MeshLambertMaterial,
   NearestFilter,
@@ -13,6 +14,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
 import { BACK_BONE, HAT_BONE, NECK_OFFSET_BONE, PART_SLOTS } from '../bloxity/avatarAssets'
+import { applyEmote } from './emotes'
 import { computePose, POSED_BONES } from './playerPose'
 
 /**
@@ -65,6 +67,8 @@ export function collectRig(root) {
     handBone: null,
     handPoint: null,
     handRestInv: null,
+    /** Hand and shoe items, which follow their bone's position and turn but not its scale. */
+    pairItems: [],
   }
 
   const meshBySlot = new Map(
@@ -109,6 +113,13 @@ export function collectRig(root) {
     // an axis, record for each bone the local-space axis matching each character-space
     // axis and animate about those.
     root.updateMatrixWorld(true)
+    // Each bone's rest transform in model space, inverted, captured before any pose or
+    // proportion touches it: accessories are placed against these (see attachItem).
+    // Not skeleton.boneInverses: the leaf bones' inverse binds are 90 degrees off rest.
+    const rootInv = new Matrix4().copy(root.matrixWorld).invert()
+    for (const bone of skeleton.bones) {
+      if (rig.bones[bone.name]) rig.bones[bone.name].restInverse = new Matrix4().multiplyMatrices(rootInv, bone.matrixWorld).invert()
+    }
     const rootQuat = new Quaternion()
     root.getWorldQuaternion(rootQuat)
     const rootQuatInv = rootQuat.invert()
@@ -324,17 +335,91 @@ export function disposeMergedBody(body) {
  * of `Spine2`.
  */
 export function attachAccessory(rig, kind, object) {
-  const bone = kind === 'hat' ? rig.hatBone : rig.backBone
+  // Hair and masks are worn like hats, together with one.
+  const onHead = kind === 'hat' || kind === 'hair' || kind === 'mask'
+  const bone = onHead ? rig.hatBone : rig.backBone
   if (!object || !bone) return null
 
   object.scale.setScalar(1)
-  object.position.set(0, kind === 'hat' ? 0.8 : 0, 0)
+  object.position.set(0, onHead ? 0.8 : 0, 0)
   object.traverse((child) => {
     if (child.isMesh) child.castShadow = true
   })
 
   bone.add(object)
   return object
+}
+
+const _origin = new Matrix4()
+const _mirror = new Matrix4().makeScale(-1, 1, 1)
+
+/**
+ * Attaches a neck, chest, waist, hand or shoes item (`slot` is an ACCESSORY_SLOTS
+ * entry): `restInverse(bone) * translate(origin)` under its bone, so it sits where the
+ * Bloxity portal puts it. Hands and shoes come as a pair, the second a copy mirrored
+ * across x on the right bone; those follow their bone's position and turn but not its
+ * scale (placePairItems, every frame). Returns every object added, for removal.
+ */
+export function attachItem(rig, slot, object) {
+  const entry = rig.bones[slot.bone]
+  if (!object || !entry?.restInverse) return []
+  _origin.makeTranslation(...slot.origin)
+  const shadow = (o) =>
+    o.traverse((child) => {
+      if (child.isMesh) child.castShadow = true
+    })
+  shadow(object)
+  object.matrixAutoUpdate = false
+
+  if (!slot.mirrorBone) {
+    object.matrix.multiplyMatrices(entry.restInverse, _origin)
+    entry.bone.add(object)
+    return [object]
+  }
+
+  const mirrorEntry = rig.bones[slot.mirrorBone]
+  const copy = object.clone(true)
+  copy.matrixAutoUpdate = false
+  // A mirror flips the faces' winding: draw the copy from both sides.
+  copy.traverse((child) => {
+    if (child.isMesh) {
+      child.material = child.material.clone()
+      child.material.side = DoubleSide
+    }
+  })
+  const pairs = [{ object, bone: entry.bone, local: new Matrix4().multiplyMatrices(entry.restInverse, _origin) }]
+  if (mirrorEntry?.restInverse) {
+    pairs.push({ object: copy, bone: mirrorEntry.bone, local: new Matrix4().multiplyMatrices(mirrorEntry.restInverse, _mirror).multiply(_origin) })
+  }
+  for (const pair of pairs) {
+    rig.root.add(pair.object)
+    rig.pairItems.push(pair)
+  }
+  return pairs.map((pair) => pair.object)
+}
+
+/** Forgets the pair items (their objects are removed by whoever attached them). */
+export function clearPairItems(rig) {
+  rig.pairItems.length = 0
+}
+
+const _rootInv = new Matrix4()
+const _boneModel = new Matrix4()
+const _pairP = new Vector3()
+const _pairQ = new Quaternion()
+const _pairS = new Vector3()
+const _one = new Vector3(1, 1, 1)
+
+/** Puts each hand and shoe item on its bone: its position and turn, scale 1. Run after animateRig. */
+export function placePairItems(rig) {
+  if (rig.pairItems.length === 0) return
+  rig.root.updateWorldMatrix(true, false)
+  _rootInv.copy(rig.root.matrixWorld).invert()
+  for (const { object, bone, local } of rig.pairItems) {
+    bone.updateWorldMatrix(true, false)
+    _boneModel.multiplyMatrices(_rootInv, bone.matrixWorld).decompose(_pairP, _pairQ, _pairS)
+    object.matrix.compose(_pairP, _pairQ, _one).multiply(local)
+  }
 }
 
 /**
@@ -444,6 +529,8 @@ export function animateRig(rig, motion, unitsPerMetre = 1) {
     rotateBone(rig, name, 'axisY', joint.twist)
   }
   rig.root.position.y = rig.rootRestY + pose.lift * unitsPerMetre
+  // A Boxity emote, blended over the pose (see emotes.js).
+  if (motion.emote) applyEmote(rig, motion.emote)
 }
 
 const _parentInv = new Matrix4()

@@ -3,20 +3,26 @@
  * remote player) positioned from the frame loop, like the power popups.
  */
 
-export const NAMEPLATE_POOL_SIZE = 8
+/** One per possible remote player, plus one for your own chat bubble. */
+export const NAMEPLATE_POOL_SIZE = 9
 
 const pool = []
 
-/** Each tag is a container holding an outline copy and a fill copy of the name. */
+/**
+ * Each tag is a container holding an outline copy and a fill copy of the name, and a
+ * chat bubble above them (`[data-bubble]`).
+ */
 export function registerNameplateElements(elements) {
   pool.length = 0
   for (const el of elements) {
-    if (el) pool.push({ el, copies: [...el.children], text: '', shown: false })
+    if (!el) continue
+    const bubble = el.querySelector('[data-bubble]')
+    pool.push({ el, copies: [...el.querySelectorAll('[data-name]')], bubble, bubbleText: '', text: '', shown: false })
   }
 }
 
-/** Shows slot `i` at screen (x, y) with `text`; null x hides it. */
-export function placeNameplate(i, text, x, y, alpha = 1) {
+/** Shows slot `i` at screen (x, y) with `text`, and `bubble` over it if any; null x hides it. */
+export function placeNameplate(i, text, x, y, alpha = 1, bubble = '') {
   const slot = pool[i]
   if (!slot) return
   if (x === null) {
@@ -29,6 +35,12 @@ export function placeNameplate(i, text, x, y, alpha = 1) {
   if (slot.text !== text) {
     slot.text = text
     for (const copy of slot.copies) copy.textContent = text
+  }
+  if (slot.bubble && slot.bubbleText !== bubble) {
+    slot.bubbleText = bubble
+    slot.bubble.textContent = bubble
+    // '' falls back to the stylesheet's clamped two-line box.
+    slot.bubble.style.display = bubble ? '' : 'none'
   }
   if (!slot.shown) {
     slot.el.style.display = 'block'

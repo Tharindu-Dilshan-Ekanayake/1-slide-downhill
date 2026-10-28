@@ -11,13 +11,13 @@
  *     pantsId, shirtId, faceId }
  */
 
-export const AVATAR_CDN = 'https://static.bloxity.io/avatars'
+import { bloxityEnv } from './env'
 
-/** Same value BloxityProvider passes to `init()`; the composited skin is served here. */
-const API_URL = import.meta.env.VITE_BLOXITY_API_URL || 'https://api.bloxity.io'
+/** Where avatar assets live in the told environment. */
+const cdn = () => `${bloxityEnv().staticUrl}/avatars`
 
 /** The base humanoid body + skeleton. All other assets modify this. */
-export const BASE_BODY_URL = `${AVATAR_CDN}/player.glb`
+export const baseBodyUrl = () => `${cdn()}/player.glb`
 
 /** Bone that hats attach to, from player.glb's skeleton. */
 export const HAT_BONE = 'Neck1'
@@ -60,13 +60,30 @@ export function isRealId(id) {
 export const assetUrls = {
   part: (slot, id) => {
     const { dir, suffix } = PART_SLOTS[slot]
-    return `${AVATAR_CDN}/parts/${dir}/${id}${suffix}.glb`
+    return `${cdn()}/parts/${dir}/${id}${suffix}.glb`
   },
-  skinTexture: (id) => `${AVATAR_CDN}/skins/${id}.png`,
-  hatMesh: (id) => `${AVATAR_CDN}/items/hats/${id}.obj`,
-  hatTexture: (id) => `${AVATAR_CDN}/textures/hats/${id}.png`,
-  backMesh: (id) => `${AVATAR_CDN}/items/back/${id}.obj`,
-  backTexture: (id) => `${AVATAR_CDN}/textures/back/${id}.png`,
+  skinTexture: (id) => `${cdn()}/skins/${id}.png`,
+  /** Hats, hair and masks all live with the hats. */
+  hatMesh: (id) => `${cdn()}/items/hats/${id}.obj`,
+  hatTexture: (id) => `${cdn()}/textures/hats/${id}.png`,
+  backMesh: (id) => `${cdn()}/items/back/${id}.obj`,
+  backTexture: (id) => `${cdn()}/textures/back/${id}.png`,
+  /** Neck, chest, waist, hand and shoes items. */
+  itemMesh: (slot, id) => `${cdn()}/items/${slot}/${id}.obj`,
+  itemTexture: (slot, id) => `${cdn()}/textures/${slot}/${id}.png`,
+}
+
+/**
+ * The accessory slots beyond hat and back, each on its bone at `origin` (player.glb
+ * model space). Hands and shoes are worn as a pair: the item on the left bone plus a
+ * copy mirrored across x on the right one.
+ */
+export const ACCESSORY_SLOTS = {
+  neck: { idKey: 'neckId', bone: 'Spine2', origin: [0, 4.8, 0] },
+  chest: { idKey: 'chestId', bone: 'Spine2', origin: [0, 3.6, 0] },
+  waist: { idKey: 'waistId', bone: 'Spine1', origin: [0, 2.4, 0] },
+  hand: { idKey: 'handId', bone: 'ArmL2_leaf', mirrorBone: 'ArmR2_leaf', origin: [0, 0, 0] },
+  shoes: { idKey: 'shoesId', bone: 'LegL2_leaf', mirrorBone: 'LegR2_leaf', origin: [0, 0, 0] },
 }
 
 /** Skin ids fall back to "0" rather than being skipped. */
@@ -98,5 +115,5 @@ export function skinCompositeUrl(equipped) {
 
   let key = `s${skinIdOrDefault(equipped.skinId)}`
   for (const [field, prefix] of layers) key += `_${prefix}${equipped[field]}`
-  return `${API_URL}/v1/avatar/skin-texture/${key}.png`
+  return `${bloxityEnv().apiUrl}/v1/avatar/skin-texture/${key}.png`
 }

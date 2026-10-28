@@ -49,7 +49,7 @@ export function createMusic(ctx, destination, noiseBuffer) {
   let step = 0
   let nextAt = 0
   let timer = null
-  const level = { base: 0.55, ducked: 1 }
+  const level = { base: 0.55, ducked: 1, volume: 1 }
 
   function note(midi, t, { type = 'sine', length = 0.3, volume = 0.05, attack = 0.01 } = {}) {
     const osc = ctx.createOscillator()
@@ -103,7 +103,7 @@ export function createMusic(ctx, destination, noiseBuffer) {
     }
   }
 
-  const applyLevel = (seconds) => out.gain.setTargetAtTime(level.base * level.ducked, ctx.currentTime, seconds)
+  const applyLevel = (seconds) => out.gain.setTargetAtTime(Math.max(0.0001, level.base * level.ducked * level.volume), ctx.currentTime, seconds)
 
   return {
     start() {
@@ -118,6 +118,11 @@ export function createMusic(ctx, destination, noiseBuffer) {
     duck(on) {
       level.ducked = on ? 0.45 : 1
       applyLevel(0.4)
+    },
+    /** The player's music volume, 0..1 (Boxity's music_volume setting). */
+    setVolume(volume) {
+      level.volume = volume
+      applyLevel(0.15)
     },
   }
 }

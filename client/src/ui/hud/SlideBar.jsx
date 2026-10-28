@@ -95,7 +95,7 @@ export function SlideBar() {
   const packs = slidePacks({ level, rebirths })
 
   return (
-    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(18), width: u(WIDTH), gap: u(8) }}>
+    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: `calc(${u(18)} + var(--controls-lift))`, width: u(WIDTH), gap: u(8) }}>
       <div className="relative flex w-full items-end justify-center" style={{ height: u(52) }}>
         <span style={{ fontSize: u(44) }}>
           <StrokeText stroke={u(9)}>Slide: {formatNumber(slide)}</StrokeText>

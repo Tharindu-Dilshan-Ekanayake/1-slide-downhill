@@ -1,9 +1,11 @@
 import { Room } from '@colyseus/core'
 
+import { boardScores } from '../../../shared/bloxityBoards.js'
 import { applyOfflineProgress } from '../../../shared/logic.js'
 import { PlayerSession } from '../../../shared/session.js'
 import { clampToWalkable, isSlideReturn, MAX_MOVE_SPEED, SPAWN } from '../../../shared/world.js'
-import { getSphinxStock, loadProfile, saveProfile, takeSphinx } from '../db.js'
+import { queueScores, verifyGameToken } from '../bloxity.js'
+import { carryGuestProgress, getSphinxStock, loadProfile, saveProfile, takeSphinx } from '../db.js'
 import { getLeaderboards } from '../leaderboards.js'
 import { activePlayers, broadcastAll, liveRooms } from '../registry.js'
 import { GameState, PlayerState } from './schema.js'
@@ -20,6 +22,11 @@ const MOVE_SLACK = 2.5
 const DUPLICATE_LOGIN = 4100
 /** Names this server process in save ownership; Legion sets POD_NAME per pod. */
 const POD = process.env.POD_NAME || `local-${process.pid}`
+
+/** Boxity emote ids are 24-character catalogue ids. */
+const EMOTE_ID = /^[a-z0-9]{24}$/i
+/** Guests are `guest-<id>`: the only ids a client may claim without a Boxity token. */
+const GUEST_ID = /^guest-[\w-]{6,74}$/
 
 /** What other players may be told someone is doing. */
 const ANIMS = ['idle', 'walk', 'run', 'jump', 'slide']
@@ -68,6 +75,7 @@ export class GameRoom extends Room {
     this.onMessage('*', (client, type, payload) => {
       if (type === 'pos') return this.handlePosition(client, payload)
       if (type === 'look') return this.handleLook(client, payload)
+      if (type === 'emote') return this.handleEmote(client, payload)
       const member = this.members.get(client.sessionId)
       if (!member) return
       member.session.handle(String(type), payload || {}, Date.now())
@@ -77,17 +85,44 @@ export class GameRoom extends Room {
     this.autosave = setInterval(() => this.saveAll(), AUTOSAVE_MS)
   }
 
-  onAuth(_client, options) {
-    // TODO: verify the Bloxity session token (options.token) against Bloxity before
-    // trusting options.playerId - until then anyone can claim any id. Guests use a
-    // random per-browser id, so they can only ever reach their own guest save.
-    const playerId = String(options?.playerId || '').slice(0, 80)
-    if (!playerId) throw new Error('Missing player id')
-    return { playerId, name: cleanName(options?.name) }
+  /**
+   * Who is joining. A signed-in player sends their Boxity session token, verified with
+   * Boxity: their save is their Boxity account id, and the guest saves this browser
+   * played before signing in may carry over (onJoin). Without a token a client can only
+   * be a guest (`guest-<random>`), so it can only ever reach its own guest save.
+   */
+  async onAuth(_client, options) {
+    const name = cleanName(options?.name)
+    const guestId = GUEST_ID.test(String(options?.guestId || '')) ? String(options.guestId) : null
+    const token = typeof options?.token === 'string' ? options.token : ''
+    if (token) {
+      const verified = await verifyGameToken(token)
+      if (verified?.valid && verified.user?._id) {
+        const legionId = String(verified.user._id)
+        const carryFrom = [
+          // Boxity guest accounts (a CrazyGames guest has a session too, saved under its
+          // id), then this browser's own guest save.
+          ...(Array.isArray(verified.carriedFrom) ? verified.carriedFrom.slice(0, 5).map(String) : []),
+          ...(guestId ? [guestId] : []),
+        ]
+        return { playerId: legionId, legionId, name, carryFrom }
+      }
+      if (verified) throw new Error('Your Boxity session has expired - please sign in again.')
+      // Boxity couldn't be asked. Locally, trust the claimed id so development works
+      // offline; deployed, never.
+      if (process.env.NODE_ENV !== 'production' && options?.playerId) {
+        const legionId = String(options.playerId).slice(0, 80)
+        return { playerId: legionId, legionId, name, carryFrom: [] }
+      }
+      throw new Error('Could not check your Boxity session - try again in a moment.')
+    }
+    const playerId = String(options?.playerId || '')
+    if (!GUEST_ID.test(playerId)) throw new Error('Sign in, or play as a guest.')
+    return { playerId, legionId: '', name, carryFrom: [] }
   }
 
   async onJoin(client, _options, auth) {
-    const { playerId, name } = client.auth || auth
+    const { playerId, legionId, name, carryFrom } = client.auth || auth
 
     // Same account joining again (a refresh, a new tab, a reconnect the old session
     // hasn't noticed yet): the newest connection wins. The old one is saved and removed
@@ -98,13 +133,14 @@ export class GameRoom extends Room {
 
     const now = Date.now()
     const owner = `${POD}:${client.sessionId}`
+    if (carryFrom?.length) await carryGuestProgress(playerId, carryFrom, name, owner)
     const profile = await loadProfile(playerId, name, owner)
     const offline = applyOfflineProgress(profile, now)
 
     const player = new PlayerState()
     const spawnX = SPAWN.x + (Math.random() - 0.5) * 6
     const spawnZ = SPAWN.z + (Math.random() - 0.5) * 4
-    Object.assign(player, { name, x: spawnX, y: 0, z: spawnZ, rotY: Math.PI, anim: 'idle' })
+    Object.assign(player, { name, uid: legionId || '', x: spawnX, y: 0, z: spawnZ, rotY: Math.PI, anim: 'idle' })
     this.state.players.set(client.sessionId, player)
 
     const session = new PlayerSession(profile, {
@@ -126,7 +162,7 @@ export class GameRoom extends Room {
       },
     })
 
-    this.members.set(client.sessionId, { session, playerId, owner, lastPos: { x: spawnX, z: spawnZ }, lastPosAt: now })
+    this.members.set(client.sessionId, { session, playerId, legionId, owner, lastPos: { x: spawnX, z: spawnZ }, lastPosAt: now })
     activePlayers.set(playerId, { room: this, client })
 
     session.sendProfile()
@@ -169,6 +205,7 @@ export class GameRoom extends Room {
     if (member) {
       if (activePlayers.get(member.playerId)?.client === client) activePlayers.delete(member.playerId)
       this.members.delete(client.sessionId)
+      this.reportScores(member)
       if (!member.kicked) await saveProfile(member.session.profile, member.owner)
     }
     this.updateListing()
@@ -214,7 +251,23 @@ export class GameRoom extends Room {
   }
 
   saveAll() {
+    for (const member of this.members.values()) this.reportScores(member)
     return Promise.all([...this.members.values()].map((m) => (m.kicked ? null : saveProfile(m.session.profile, m.owner))))
+  }
+
+  /** Queues a signed-in player's leaderboard scores, from the profile this server owns. */
+  reportScores(member) {
+    if (member.legionId && !member.kicked) queueScores(member.legionId, boardScores(member.session.profile))
+  }
+
+  /**
+   * An emote Boxity's picker played on someone (only ids they own reach the game):
+   * passed on to everyone else in the room, who play it on that player's character.
+   */
+  handleEmote(client, msg) {
+    const id = String(msg?.id || '')
+    if (!EMOTE_ID.test(id) || !this.state.players.has(client.sessionId)) return
+    this.broadcast('emote', { sid: client.sessionId, id }, { except: client })
   }
 
   updateListing() {
@@ -295,7 +348,8 @@ export class GameRoom extends Room {
     }
     const look = JSON.stringify({
       equipped: clean(msg.equipped, (v) => (typeof v === 'string' && v.length <= 40) || (Number.isFinite(v) && Math.abs(v) < 1e12)),
-      proportions: clean(msg.proportions, (v) => Number.isFinite(v) && v > 0.2 && v < 3),
+      // Wide enough for every Boxity range (legOffsetX runs -0.7 to 5).
+      proportions: clean(msg.proportions, (v) => Number.isFinite(v) && v > -1 && v < 6),
     })
     if (look.length <= 2048 && look !== player.look) player.look = look
   }

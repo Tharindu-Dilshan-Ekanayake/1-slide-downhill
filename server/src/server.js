@@ -3,7 +3,8 @@ import express from 'express'
 import { defineRoom, defineServer } from '@colyseus/core'
 import { WebSocketTransport } from '@colyseus/ws-transport'
 
-import { closeStorage, openStorage } from './db.js'
+import { BLOXITY, flushScores, portalHost, startScoreReports, verifyGameToken } from './bloxity.js'
+import { closeStorage, openStorage, recordGemsGrant } from './db.js'
 import { startLeaderboards } from './leaderboards.js'
 import { activePlayers } from './registry.js'
 import { GameRoom } from './rooms/GameRoom.js'
@@ -13,13 +14,14 @@ const PORT = Number(process.env.PORT || 2567)
 
 /**
  * Browser origins allowed to call /api: Legion's CLIENT_ORIGIN (the game's site), the
- * Bloxity-hosted frontends, extra ones from CLIENT_ORIGINS, and Vite dev servers.
+ * Bloxity-hosted frontends of this environment (under stage.bloxity.io on stage),
+ * extra ones from CLIENT_ORIGINS, and Vite dev servers.
  */
-const gameId = process.env.BLOXITY_GAME_ID
 const ALLOWED_ORIGINS = [
   process.env.CLIENT_ORIGIN,
-  gameId && `https://${gameId}.play.bloxity.io`,
-  gameId && `https://${gameId}.dev.play.bloxity.io`,
+  BLOXITY.portalUrl,
+  `https://${BLOXITY.gameId}.play.${portalHost()}`,
+  `https://${BLOXITY.gameId}.dev.play.${portalHost()}`,
   ...(process.env.CLIENT_ORIGINS || '').split(',').map((s) => s.trim()),
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173', 'http://localhost:5180', 'http://127.0.0.1:5180']),
 ].filter(Boolean)
@@ -40,15 +42,43 @@ function routes(app) {
   })
 
   /**
-   * Auth passthrough for the Bloxity SDK: the frontend POSTs `{ token, user }` from
-   * `Legion.SDK.auth.authenticateWithServer('/api/legion-auth')`.
+   * `Legion.SDK.auth.authenticateWithServer('/api/legion-auth')`: POSTs `{ token, user }`.
+   * The answer comes from the token as Boxity verifies it, never from the posted user.
+   * (The game itself verifies the token when a player joins a room; see GameRoom.onAuth.)
    */
-  app.post('/api/legion-auth', (req, res) => {
-    // TODO: verify the Bloxity JWT here before trusting req.body.user. Until then
-    // `req.body.user` is attacker-controlled - anyone can POST any legionId. Verify
-    // `req.body.token` against Bloxity's public key / introspection endpoint and
-    // derive the user from the *verified* claims, not from the body.
-    res.json({ accessToken: 'stub', user: { legionId: req.body?.user?._id } })
+  app.post('/api/legion-auth', async (req, res) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : ''
+    const verified = token ? await verifyGameToken(token) : { valid: false }
+    if (!verified) return res.status(503).json({ error: 'Could not check the session' })
+    if (!verified.valid || !verified.user?._id) return res.status(401).json({ error: 'Invalid session' })
+    res.json({ user: { legionId: String(verified.user._id), username: verified.user.username } })
+  })
+
+  /**
+   * Gems purchases, delivered by Boxity server to server. Must answer 2xx or the Gems
+   * are refunded. Can land on any pod, so the grant is recorded in the database by
+   * transaction id (once), never looked up in one pod's memory. The game sells nothing
+   * for Gems yet: grants are recorded, and a sku would be applied from that record.
+   */
+  app.post('/api/bloxity/gems', async (req, res) => {
+    const secret = process.env.LEGION_WEBHOOK_SECRET
+    if (secret && req.get('x-legion-webhook-secret') !== secret) return res.status(401).json({ error: 'Bad secret' })
+    const body = req.body || {}
+    if (!body.transactionId || !body.userId || !body.sku) return res.status(400).json({ error: 'Missing transactionId, userId or sku' })
+    try {
+      const fresh = await recordGemsGrant(String(body.transactionId), {
+        userId: String(body.userId),
+        sku: String(body.sku),
+        productPrice: body.productPrice,
+        metadata: body.metadata ?? null,
+        timestamp: body.timestamp ?? Date.now(),
+      })
+      if (fresh) console.log(`[gems] recorded ${body.transactionId}: ${body.sku} for ${body.userId}`)
+      res.json({ ok: true })
+    } catch (err) {
+      console.error('[gems] could not record a grant', err)
+      res.status(500).json({ error: 'Could not record the grant' })
+    }
   })
 }
 
@@ -65,8 +95,12 @@ const server = defineServer({
 
 // SIGTERM (a deploy or scale-in) runs Colyseus' graceful shutdown: every room saves
 // and hands its players to another pod (GameRoom.onBeforeShutdown), then this.
-server.onShutdown(() => closeStorage())
+server.onShutdown(async () => {
+  await flushScores()
+  await closeStorage()
+})
 
 await server.listen(PORT)
 startLeaderboards()
-console.log(`[server] listening on port ${PORT}${process.env.POD_NAME ? ` (${process.env.POD_NAME}, ${process.env.BLOXITY_CHANNEL})` : ''}`)
+startScoreReports()
+console.log(`[server] listening on port ${PORT}${process.env.POD_NAME ? ` (${process.env.POD_NAME}, ${process.env.BLOXITY_CHANNEL})` : ''}, Boxity ${BLOXITY.env}`)

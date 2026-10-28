@@ -69,7 +69,7 @@ export function createProfile(id, name) {
     freeRewardClaimed: false,
     tutorialStep: 0,
     badges: [],
-    stats: { slides: 0, trains: 0, bestDistance: 0, playtime: 0, bestSlide: 0 },
+    stats: { slides: 0, trains: 0, bestDistance: 0, playtime: 0, bestSlide: 0, winsEarned: 0 },
     lastTreadmill: -1,
     lastSeen: 0,
     settings: { autoRebirth: false },
@@ -83,6 +83,8 @@ export function normalizeProfile(raw, id, name) {
   const p = { ...base, ...raw, id, name: name || raw.name || base.name }
   p.boosts = { ...base.boosts, ...(raw.boosts || {}) }
   p.stats = { ...base.stats, ...(raw.stats || {}) }
+  // Saves from before Wins earned were counted start from what they hold now.
+  if (!Number.isFinite(raw.stats?.winsEarned)) p.stats.winsEarned = Number.isFinite(raw.wins) ? raw.wins : 0
   p.settings = { ...base.settings, ...(raw.settings || {}) }
   p.daily = { ...base.daily, ...(raw.daily || {}) }
   p.items = Object.fromEntries(Object.entries(raw.items || {}).filter(([itemId]) => ITEMS[itemId]))
@@ -291,6 +293,7 @@ export function applySlide(profile, now) {
   const wins = Math.max(1, Math.round(baseSlideWins(distance) * multiplier))
   const best = distance > profile.stats.bestDistance
   profile.wins += wins
+  profile.stats.winsEarned += wins
   profile.stats.slides += 1
   profile.stats.bestDistance = Math.max(profile.stats.bestDistance, distance)
   const duration = slideDuration(distance)
@@ -463,7 +466,10 @@ export function usePotion(profile, itemId, now) {
 /** Applies a reward grant: { wins } | { item } | { pet } | { slide } | { hatch }. */
 export function applyGrant(profile, grant, { rand = Math.random } = {}) {
   const result = { ok: true }
-  if (grant.wins) profile.wins += grant.wins
+  if (grant.wins) {
+    profile.wins += grant.wins
+    profile.stats.winsEarned += grant.wins
+  }
   if (grant.slide) {
     profile.slide = tidy(profile.slide + grant.slide)
     profile.stats.bestSlide = Math.max(profile.stats.bestSlide, profile.slide)

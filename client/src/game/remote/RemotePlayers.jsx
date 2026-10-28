@@ -12,6 +12,7 @@ import { createGlowInstances, disposeGlow } from '../glow'
 import { sharedMaterials, STYLE } from '../materials'
 import { runtime } from '../runtime'
 import { BOARD_QUAT, createRideState, FACE_DOWNHILL, meterAtZ, riderBody, rideState, rideTurn, standSide } from '../slide/path'
+import { bubbleFor } from '../chatBubbles'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
 
 /** Remote players are drawn this far in the past, so 10 Hz updates interpolate. */
@@ -119,13 +120,13 @@ function writeFigure(body, instance, r, base, swing, armSwing) {
 }
 
 /** Puts a name tag over `at`, if it's on screen; returns the next free tag. */
-function writeNameplate(plate, name, at, distance, maxDistance, camera, size) {
+function writeNameplate(plate, name, at, distance, maxDistance, camera, size, bubble = '') {
   if (plate >= NAMEPLATE_POOL_SIZE) return plate
   if (distance < maxDistance) {
     _v.copy(at).project(camera)
     if (_v.z < 1) {
       const fade = Math.min(1, (maxDistance - distance) / 6)
-      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade)
+      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade, bubble)
       return plate + 1
     }
   }
@@ -224,7 +225,7 @@ export function RemotePlayers() {
             instance = writeFigure(body, instance, r, _base, st.stand > 0.5 ? 0 : Math.sin(t * 30) * 0.04, arms)
           }
           _v.copy(_rider).y += st.stand > 0.5 ? 2.3 : 1.4
-          plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size)
+          plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, bubbleFor(r.uid, now))
         }
         continue
       }
@@ -249,7 +250,7 @@ export function RemotePlayers() {
       // Name tag, just above the head (players are 1.8 tall).
       if (visible) {
         _v.set(r.position.x, r.position.y + 2.05, r.position.z)
-        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size)
+        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, bubbleFor(r.uid, now))
       }
 
       // Their pets: follow in formation, drawn by the shared pet renderer.
@@ -270,6 +271,13 @@ export function RemotePlayers() {
           runtime.remotePets.push(pet)
         }
       }
+    }
+    // Your own chat bubble, over your head (you have no name tag).
+    const ownBubble = bubbleFor('local', now)
+    if (ownBubble) {
+      _v.copy(runtime.player.position)
+      _v.y += 2.3
+      plate = writeNameplate(plate, '', _v, 0, Infinity, camera, size, ownBubble)
     }
     hideNameplatesFrom(plate)
     body.count = instance
