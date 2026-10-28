@@ -12,6 +12,7 @@ import ErrorBoundary from '../ui/ErrorBoundary'
 import { createBoardModel } from './board'
 import FallbackAvatar from './FallbackAvatar'
 import PlayerAvatar from './PlayerAvatar'
+import { createEmoteState, stepEmote } from './emotes'
 import { runtime } from './runtime'
 import { BOARD_QUAT, LEAP, riderBody, rideTurn, standSide } from './slide/path'
 import { advanceSlide, slide } from './slide/slideControl'
@@ -117,7 +118,9 @@ export function Player({ onAvatarReady }) {
     vy: 0,
     stride: 0,
     sliding: false,
+    emote: null,
   })
+  const emoteState = useMemo(() => createEmoteState(), [])
 
   // The blob shadow follows what's drawn, which is down the hill while you slide.
   const shownAt = useMemo(() => new Vector3().copy(runtime.player.position), [])
@@ -181,6 +184,8 @@ export function Player({ onAvatarReady }) {
       const shudder = slide.phase === 'ride' && !slide.airborne ? Math.min(1, slide.speed / 150) * 0.018 : 0
       b.position.y = Math.sin(state.clock.elapsedTime * 47) * shudder
       motion.sliding = true
+      runtime.emote = null
+      motion.emote = null
       motion.launch = slide.launch
       motion.stand = slide.stand
       motion.air = r.air
@@ -321,6 +326,9 @@ export function Player({ onAvatarReady }) {
     // --- Publish motion ---------------------------------------------------------
     player.speed = speed
     player.anim = !player.grounded ? 'jump' : running ? 'run' : speed > 0.5 ? 'walk' : 'idle'
+    // An emote plays standing still; moving, jumping or training stops it.
+    if (runtime.emote && player.anim !== 'idle') runtime.emote = null
+    motion.emote = stepEmote(emoteState, runtime.emote, performance.now(), delta)
 
     const shownSpeed = running ? WALK_SPEED : speed
     motion.speed = shownSpeed

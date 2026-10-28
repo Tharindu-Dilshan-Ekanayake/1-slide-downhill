@@ -39,7 +39,7 @@ export function SlideButton() {
 
   if (!visible) return null
   return (
-    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(300) }}>
+    <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: `calc(${u(300)} + var(--controls-lift))` }}>
       <Icon name="arrowDown" size={u(80)} className="pp-bounce" style={{ marginBottom: u(8) }} />
       <ChunkyButton gradient={GRADIENTS.greenButton} onClick={press} title="Slide!" radius={26} border={6} className="pp-slide-btn" style={{ width: u(360), height: u(112), gap: u(10) }}>
         <Icon name="slide" size={u(92)} />

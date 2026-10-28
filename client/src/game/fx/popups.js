@@ -1,5 +1,7 @@
 import { Vector3 } from 'three'
 
+import { hudPx } from '../../ui/hud/style'
+
 /**
  * Floating "+12 POWER" text: a fixed pool of DOM elements (max 10 alive), positioned
  * by projecting a world point each frame. When the pool is full the oldest popup is
@@ -103,6 +105,9 @@ export function spawnPopup(text, position, style = {}) {
 const SCATTER_HALF_WIDTH = 620
 const SCATTER_TOP = 350
 const SCATTER_BOTTOM = 340
+/** Upright on a touch screen the Slide bar sits this much higher, over the controls (index.css --controls-lift). */
+const CONTROLS_LIFT = 140
+const coarsePointer = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 /** Kept at least this far in from the sides on narrow screens (reference px). */
 const SCATTER_EDGE = 130
 /** The rider, in scatter coordinates: the middle (|u| below this), from this far down. */
@@ -151,11 +156,12 @@ export function spawnScattered(text, style = {}) {
 export function updatePopups(camera, width, height) {
   const now = performance.now()
   // One reference pixel on this screen, as the HUD's --px works it out.
-  const px = Math.min(1.4, Math.max(0.42, Math.min(width / 1920, height / 1080)))
+  const px = hudPx(width, height)
   // The scatter area on this screen.
   const halfWidth = Math.max(0, Math.min(SCATTER_HALF_WIDTH * px, width / 2 - SCATTER_EDGE * px))
   const top = SCATTER_TOP * px
-  const span = Math.max(0, height - SCATTER_BOTTOM * px - top)
+  const lift = coarsePointer && height > width ? CONTROLS_LIFT : 0
+  const span = Math.max(0, height - SCATTER_BOTTOM * px - lift - top)
   for (const p of pool) {
     if (!p.active) continue
     const t = (now - p.born) / p.life

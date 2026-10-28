@@ -1,3 +1,6 @@
+import { useEffect } from 'react'
+
+import { platform } from '../../bloxity/platform'
 import { useGame } from '../../store/game'
 import EggPanel from './EggPanel'
 import InteractPrompt from './InteractPrompt'
@@ -23,8 +26,23 @@ export function HUD() {
   const panelOpen = useGame((s) => s.panel !== null)
   // While you slide the side menus clear out, as in the reference.
   const sliding = useGame((s) => Boolean(s.slide || s.slideResult))
+  const result = useGame((s) => Boolean(s.slideResult))
+  // Boxity's banners go round full-screen panels and the slide result. Not round play:
+  // the HUD fills every edge, where they'd cover the buttons.
+  useEffect(() => {
+    platform.screen(panelOpen ? 'panel' : result ? 'results' : null)
+  }, [panelOpen, result])
   return (
-    <div className="pp-font pointer-events-none absolute inset-0 z-20 select-none">
+    // Inset by the safe areas: nothing under a notch, a rounded corner or the home bar.
+    <div
+      className="pp-font pointer-events-none absolute z-20 select-none"
+      style={{
+        top: 'env(safe-area-inset-top, 0px)',
+        right: 'env(safe-area-inset-right, 0px)',
+        bottom: 'env(safe-area-inset-bottom, 0px)',
+        left: 'env(safe-area-inset-left, 0px)',
+      }}
+    >
       <div className="absolute inset-0 transition-opacity duration-150" style={{ opacity: panelOpen ? 0 : 1, visibility: panelOpen ? 'hidden' : 'visible' }}>
         <TopBar />
         <StatsPanel />

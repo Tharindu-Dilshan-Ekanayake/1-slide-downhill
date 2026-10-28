@@ -66,6 +66,19 @@ async function openMongo(uri) {
         throw err
       }
     },
+    async peek(id) {
+      const doc = await profiles.findOne({ _id: id }, { projection: { data: 1 } })
+      return doc ? doc.data : null
+    },
+    async claimKey(key, value) {
+      try {
+        await kv.insertOne({ _id: key, value, at: Date.now() })
+        return true
+      } catch (err) {
+        if (err?.code === 11000) return false
+        throw err
+      }
+    },
     async top(limit) {
       const out = {}
       for (const [board, field] of Object.entries(BOARDS)) {
@@ -133,6 +146,12 @@ async function openSqlite(path) {
       ).run(profile.id, f.name, JSON.stringify(profile), f.rebirths, f.playtime, f.bestDistance, f.updatedAt)
       return true
     },
+    async peek(id) {
+      return db.prepare('SELECT data FROM profiles WHERE id = ?').get(id)?.data ?? null
+    },
+    async claimKey(key, value) {
+      return db.prepare('INSERT OR IGNORE INTO kv (key, value) VALUES (?, ?)').run(key, String(value)).changes > 0
+    },
     async top(limit) {
       const out = {}
       for (const [board, column] of Object.entries(columns)) {
@@ -187,6 +206,38 @@ export async function loadProfile(id, name, owner) {
   }
   return normalizeProfile(raw, id, name)
 }
+
+/**
+ * A player signing in for the first time keeps what they played as a guest in this
+ * browser: if `toId` has no save yet, the first of `guestIds` that has one is copied
+ * into it, and that guest save is marked used so it can never go to a second account.
+ * An account that already has progress is left alone. Resolves true if it carried one.
+ */
+export async function carryGuestProgress(toId, guestIds, name, owner) {
+  if (await store.peek(toId)) return false
+  for (const guestId of guestIds) {
+    const data = await store.peek(guestId)
+    if (!data) continue
+    let raw
+    try {
+      raw = JSON.parse(data)
+    } catch {
+      continue
+    }
+    if (!(await store.claimKey(`carried:${guestId}`, toId))) continue
+    await saveProfile(normalizeProfile(raw, toId, name), owner)
+    console.log(`[db] carried guest progress ${guestId} -> ${toId}`)
+    return true
+  }
+  return false
+}
+
+/**
+ * Records a Gems purchase by its transaction id, once: true the first time, false for
+ * a repeat delivery. In the database, not one pod's memory - the webhook can land on
+ * any pod.
+ */
+export const recordGemsGrant = (transactionId, grant) => store.claimKey(`gems:${transactionId}`, JSON.stringify(grant))
 
 /**
  * Saves a profile if `owner` still owns it. Resolves false when it was dropped (owned

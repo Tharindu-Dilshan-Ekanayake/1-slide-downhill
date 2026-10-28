@@ -18,6 +18,11 @@ let echo = null
 let noiseBuffer = null
 let music = null
 let muted = readMuted()
+/** The player's volumes, 0..1 (Boxity's master_volume / music_volume settings). */
+let masterVolume = 1
+let musicVolume = 1
+/** Silent while Boxity shows an ad break. */
+let adBreak = false
 const lastPlayed = new Map()
 const muteListeners = new Set()
 
@@ -38,7 +43,7 @@ function unlock() {
   if (!Ctor) return
   ctx = new Ctor()
   master = ctx.createGain()
-  master.gain.value = muted ? 0 : 0.5
+  master.gain.value = masterLevel()
   master.connect(ctx.destination)
   echo = createEcho()
   // One second of white noise, reused by every whoosh and crack.
@@ -46,6 +51,7 @@ function unlock() {
   const data = noiseBuffer.getChannelData(0)
   for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1
   music = createMusic(ctx, master, noiseBuffer)
+  music.setVolume(musicVolume)
   music.start()
 }
 
@@ -94,8 +100,31 @@ export function setMuted(value) {
   } catch {
     // Not persisted; fine.
   }
-  if (master) master.gain.value = muted ? 0 : 0.5
+  applyMaster()
   for (const listener of muteListeners) listener(muted)
+}
+
+const masterLevel = () => (muted || adBreak ? 0 : 0.5 * masterVolume)
+function applyMaster() {
+  if (master) master.gain.setTargetAtTime(masterLevel(), ctx.currentTime, 0.03)
+}
+
+/** Overall volume, 0..1. */
+export function setMasterVolume(volume) {
+  masterVolume = Math.min(1, Math.max(0, volume))
+  applyMaster()
+}
+
+/** Music volume, 0..1. */
+export function setMusicVolume(volume) {
+  musicVolume = Math.min(1, Math.max(0, volume))
+  music?.setVolume(musicVolume)
+}
+
+/** Everything silent during a Boxity ad break, restored after. */
+export function setAdBreakMuted(on) {
+  adBreak = on
+  applyMaster()
 }
 
 /** Calls `listener(muted)` on every change; returns the unsubscribe. */
@@ -183,7 +212,7 @@ function windStop() {
 }
 
 function ready(name, minGapMs = 0) {
-  if (!ctx || muted || ctx.state !== 'running') return false
+  if (!ctx || muted || adBreak || ctx.state !== 'running') return false
   const now = performance.now()
   if (minGapMs && now - (lastPlayed.get(name) || 0) < minGapMs) return false
   lastPlayed.set(name, now)

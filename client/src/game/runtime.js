@@ -24,6 +24,9 @@ export const runtime = {
     frozen: false,
   },
 
+  /** The Boxity emote your character is doing, `{ id, startedAt }`, or null. Moving stops it. */
+  emote: null,
+
   /** Touch input, written by the on-screen joystick. -1..1, +y = forward. */
   input: {
     joyX: 0,

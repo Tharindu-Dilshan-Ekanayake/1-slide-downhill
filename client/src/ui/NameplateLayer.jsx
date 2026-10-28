@@ -35,8 +35,11 @@ export function NameplateLayer() {
         >
           {/* An outlined copy behind and a clean white one on top, like StrokeText: one
               element with a thick text-stroke draws stray bits of outline on phones. */}
-          <span className="pp-text-stroke" style={{ WebkitTextStrokeWidth: '0.24em', WebkitTextStrokeColor: '#121218', color: '#121218' }} />
-          <span className="pp-text-fill" style={{ color: '#ffffff' }} />
+          <span data-name className="pp-text-stroke" style={{ WebkitTextStrokeWidth: '0.24em', WebkitTextStrokeColor: '#121218', color: '#121218' }} />
+          <span data-name className="pp-text-fill" style={{ color: '#ffffff' }} />
+          {/* Their latest chat message (game/chatBubbles.js): out of the tag's flow, so the
+              name's outline copy still lines up. */}
+          <div data-bubble className="pp-bubble" style={{ display: 'none' }} />
         </div>
       ))}
     </div>

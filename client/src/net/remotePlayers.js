@@ -19,6 +19,10 @@ export function upsertRemotePlayer(sessionId, state) {
     r = {
       sessionId,
       name: '',
+      /** Their Boxity account id ('' for a guest), for chat bubbles. */
+      uid: '',
+      /** The Boxity emote they're doing, `{ id, startedAt }`, or null. */
+      emote: null,
       snaps: [],
       position: new Vector3(state.x, state.y, state.z),
       yaw: state.rotY,
@@ -38,6 +42,7 @@ export function upsertRemotePlayer(sessionId, state) {
     remotePlayers.set(sessionId, r)
   }
   r.name = state.name
+  r.uid = state.uid || ''
   r.anim = state.anim
   r.boardId = state.boardId
   if (state.look !== r.lookKey) {

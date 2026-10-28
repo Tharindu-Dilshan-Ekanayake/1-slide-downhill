@@ -7,6 +7,15 @@
 /** `u(48)` -> a CSS length equal to 48 reference pixels. */
 export const u = (n) => `calc(var(--px) * ${n})`
 
+/**
+ * One reference pixel on a `width` x `height` screen, in CSS pixels: what --px works
+ * out to (index.css), for code that places HUD things itself.
+ */
+export function hudPx(width, height) {
+  if (height > width) return Math.min(1.4, Math.max(0.3, Math.min(width / 1080, height / 1920)))
+  return Math.min(1.4, Math.max(0.42, Math.min(width / 1920, height / 1080)))
+}
+
 export const GRADIENTS = {
   gold: 'linear-gradient(180deg, #fffaa8 0%, #ffd52a 45%, #ff9c00 100%)',
   goldButton: 'linear-gradient(180deg, #fff27a 0%, #ffcb1f 48%, #ff9a0a 100%)',

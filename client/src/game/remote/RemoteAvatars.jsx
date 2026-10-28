@@ -4,6 +4,7 @@ import { Quaternion, Vector3 } from 'three'
 
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
+import { createEmoteState, stepEmote } from '../emotes'
 import { BloxityAvatar } from '../PlayerAvatar'
 import { FACE_DOWNHILL, riderBody, rideTurn, standSide } from '../slide/path'
 
@@ -32,7 +33,8 @@ const shownAt = (r) => (r.riding && r.ride?.state ? r.ride.state.position : r.po
 function RemoteAvatar({ sessionId, look }) {
   const groupRef = useRef(null)
   const lastY = useRef(null)
-  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0, sliding: false, launch: 1, stand: 0, air: 0 })
+  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0, sliding: false, launch: 1, stand: 0, air: 0, emote: null })
+  const emoteRef = useRef(null)
 
   useFrame((_state, rawDelta) => {
     const group = groupRef.current
@@ -56,6 +58,7 @@ function RemoteAvatar({ sessionId, look }) {
       m.air += ((st.airborne ? 1 : 0) - m.air) * (1 - Math.exp(-10 * delta))
       m.speed = st.phase === 'ride' ? st.speed : 0
       m.grounded = true
+      m.emote = null
       lastY.current = null
       return
     }
@@ -78,6 +81,10 @@ function RemoteAvatar({ sessionId, look }) {
     if (lastY.current !== null) m.vy += ((y - lastY.current) / Math.max(delta, 1e-3) - m.vy) * 0.3
     lastY.current = y
     m.stride += delta * (5 + 6 * Math.min(1, speed / MAX_SPEED))
+    // Their emote, as the room passed it on; moving stops it, as it does yours.
+    if (r.emote && r.anim !== 'idle') r.emote = null
+    emoteRef.current ??= createEmoteState()
+    m.emote = stepEmote(emoteRef.current, r.emote, performance.now(), delta)
   })
 
   return (

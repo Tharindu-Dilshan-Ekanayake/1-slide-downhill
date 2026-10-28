@@ -5,8 +5,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
 import {
+  ACCESSORY_SLOTS,
   assetUrls,
-  BASE_BODY_URL,
+  baseBodyUrl,
   isRealId,
   PART_SLOTS,
   skinCompositeUrl,
@@ -21,10 +22,13 @@ import {
   applyProportions,
   applySkin,
   attachAccessory,
+  attachItem,
+  clearPairItems,
   collectRig,
   disposeMergedBody,
   mergeBody,
   placeHand,
+  placePairItems,
 } from './avatarRig'
 
 /**
@@ -67,7 +71,7 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
 ) {
   // three's own GLTFLoader (the one the cosmetics use too), not drei's useGLTF, which
   // would bundle a second loader plus Draco/Meshopt/KTX2 decoders this GLB never needs.
-  const { scene: baseScene } = useLoader(GLTFLoader, BASE_BODY_URL)
+  const { scene: baseScene } = useLoader(GLTFLoader, baseBodyUrl())
   const [assembled, setAssembled] = useState(false)
   /** The merged body currently shown; replaced on every re-assembly. */
   const bodyRef = useRef(null)
@@ -144,9 +148,11 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       )
     }
 
-    // Accessories.
+    // Accessories. Hair and masks are worn with a hat, and load just like one.
     for (const [kind, idKey, meshUrl, texUrl] of [
       ['hat', 'hatId', assetUrls.hatMesh, assetUrls.hatTexture],
+      ['hair', 'hairId', assetUrls.hatMesh, assetUrls.hatTexture],
+      ['mask', 'maskId', assetUrls.hatMesh, assetUrls.hatTexture],
       ['back', 'backId', assetUrls.backMesh, assetUrls.backTexture],
     ]) {
       const id = equipped?.[idKey]
@@ -154,6 +160,17 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       jobs.push(
         Promise.all([loadOBJ(meshUrl(id)), loadTexture(texUrl(id))]).then(
           ([object, texture]) => ({ kind: 'accessory', accessory: kind, object, texture }),
+        ),
+      )
+    }
+
+    // Neck, chest, waist, hand and shoes items.
+    for (const [slot, cfg] of Object.entries(ACCESSORY_SLOTS)) {
+      const id = equipped?.[cfg.idKey]
+      if (!isRealId(id)) continue
+      jobs.push(
+        Promise.all([loadOBJ(assetUrls.itemMesh(slot, id)), loadTexture(assetUrls.itemTexture(slot, id))]).then(
+          ([object, texture]) => ({ kind: 'item', slot: cfg, object, texture }),
         ),
       )
     }
@@ -169,7 +186,7 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
               applySkin(rig, result.texture)
             } else if (result.kind === 'part') {
               applyPart(rig, result.slot, result.scene)
-            } else if (result.kind === 'accessory' && result.object) {
+            } else if ((result.kind === 'accessory' || result.kind === 'item') && result.object) {
               if (result.texture) {
                 result.object.traverse((child) => {
                   if (child.isMesh) {
@@ -177,8 +194,12 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
                   }
                 })
               }
-              const added = attachAccessory(rig, result.accessory, result.object)
-              if (added) attached.push(added)
+              if (result.kind === 'item') {
+                attached.push(...attachItem(rig, result.slot, result.object))
+              } else {
+                const added = attachAccessory(rig, result.accessory, result.object)
+                if (added) attached.push(added)
+              }
             }
           } catch (err) {
             console.warn(`[bloxity] failed to apply ${result.kind}`, err)
@@ -202,6 +223,7 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
 
     return () => {
       cancelled = true
+      clearPairItems(rig)
       for (const object of attached) {
         object.parent?.remove(object)
         object.traverse((child) => {
@@ -237,6 +259,7 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
       // animation then rotates on top of that clean base.
       applyProportions(rig, proportionsRef.current)
       animateRig(rig, motionRef?.current ?? fallbackMotion(delta), 1 / fit.scale)
+      placePairItems(rig)
       if (handRef?.current) placeHand(rig, handRef.current)
     } catch {
       // A malformed payload must not kill the render loop.
@@ -269,6 +292,6 @@ export const PlayerAvatar = forwardRef(function PlayerAvatar(props, ref) {
   return <BloxityAvatar ref={ref} {...props} equipped={avatar} proportions={proportions} onStep={game.loadingStep} />
 })
 
-useLoader.preload(GLTFLoader, BASE_BODY_URL)
+useLoader.preload(GLTFLoader, baseBodyUrl())
 
 export default PlayerAvatar

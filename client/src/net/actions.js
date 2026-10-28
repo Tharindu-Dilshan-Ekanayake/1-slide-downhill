@@ -39,6 +39,8 @@ export const actions = {
   claimFreeReward: () => send('claimFreeReward'),
   setSetting: (key, value) => send('setting', { key, value }),
   portal: () => send('portal'),
+  /** A Boxity emote you're playing, for everyone else in the room to see. */
+  emote: (id) => send('emote', { id }),
   /** Buys a shop item with Wins; see shop.js. */
   purchase: (productId) => send('purchase', { productId }),
 }
